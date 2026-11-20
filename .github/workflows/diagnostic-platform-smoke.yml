@@ -1,0 +1,45 @@
+name: Diagnostic platform smoke
+on:
+  push:
+    branches: ['diagnostic-platform/**']
+    paths:
+      - 'diagnostic-platform/**'
+      - '.github/workflows/diagnostic-platform-smoke.yml'
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Attach to Java ${{ matrix.java }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['8', '17']
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          distribution: corretto
+          java-version: '17'
+      - name: Build and test
+        working-directory: diagnostic-platform
+        run: mvn -B verify
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          distribution: corretto
+          java-version: ${{ matrix.java }}
+      - name: Validate dynamic attach and cleanup on a synthetic JVM
+        working-directory: diagnostic-platform
+        env:
+          ARTHAS_ZIP_SHA256: 2f75ea954ead5d02c4a743ecd783fd92f546a44ef3aee437ea5066eb30ad07bf
+        run: |
+          archive="$RUNNER_TEMP/arthas-4.3.5.zip"
+          curl -fsSL --retry 2 --max-time 90 \
+            https://repo.maven.apache.org/maven2/com/taobao/arthas/arthas-packaging/4.3.5/arthas-packaging-4.3.5-bin.zip \
+            -o "$archive"
+          python3 tools/arthas-smoke.py --jdk "$JAVA_HOME" --arthas-zip "$archive" \
+            --sha256 "$ARTHAS_ZIP_SHA256" --classes fixtures/target/classes
