@@ -1,0 +1,135 @@
+openapi: 3.1.0
+info:
+  title: Diagnostic Platform API
+  version: 0.1.0-draft
+  description: Contract draft for implementation. The bootstrap services expose health only.
+security:
+  - browserSession: []
+paths:
+  /api/v1/sessions:
+    post:
+      operationId: openSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [targetId, grantId]
+              properties:
+                targetId: {type: string}
+                grantId: {type: string}
+      responses:
+        '202':
+          description: Session initialization accepted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/sessions/{sessionId}/tasks:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      operationId: submitTask
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [capability]
+                  properties:
+                    capability: {const: JVM_OVERVIEW}
+                - type: object
+                  additionalProperties: false
+                  required: [capability, parameters]
+                  properties:
+                    capability: {const: METHOD_WATCH}
+                    parameters:
+                      type: object
+                      additionalProperties: false
+                      required: [className, methodName, classLoaderRef]
+                      properties:
+                        className: {type: string, minLength: 1}
+                        methodName: {type: string, minLength: 1}
+                        classLoaderRef: {type: string, minLength: 1}
+                        durationSec: {type: integer, minimum: 1, maximum: 60}
+                        maxSamples: {type: integer, minimum: 1, maximum: 10}
+      responses:
+        '202':
+          description: Task accepted, or the original task for an identical idempotent request.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /api/v1/tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      operationId: getTask
+      responses:
+        '200':
+          description: Current task and confirmed execution state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/tasks/{taskId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    post:
+      operationId: requestCancellation
+      responses:
+        '202':
+          description: Cancellation intent accepted. Termination is confirmed separately.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+components:
+  parameters:
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: {type: string}
+  securitySchemes:
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: DIAGNOSTIC_SESSION
+  responses:
+    Forbidden:
+      description: The user is not authorized for the target or capability.
+    Conflict:
+      description: Target changed, task slot occupied, or idempotency key reused with different parameters.
+  schemas:
+    Session:
+      type: object
+      required: [sessionId, targetId, state]
+      properties:
+        sessionId: {type: string}
+        targetId: {type: string}
+        state: {enum: [OPENING, ACTIVE, CLOSED, EXPIRED, REVOKED, TARGET_GONE]}
+    Task:
+      type: object
+      required: [taskId, targetId, state]
+      properties:
+        taskId: {type: string}
+        targetId: {type: string}
+        state:
+          enum: [QUEUED, DISPATCHING, RUNNING, CANCEL_REQUESTED, RECONCILING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT]
