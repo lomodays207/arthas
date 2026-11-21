@@ -1,11 +1,105 @@
 openapi: 3.1.0
 info:
   title: Diagnostic Platform API
-  version: 0.1.0-draft
-  description: Contract draft for implementation. The bootstrap services expose health only.
+  version: 0.1.0
+  description: Local integration API. JVM_OVERVIEW is the currently enabled diagnostic capability.
 security:
-  - browserSession: []
+  - bearerToken: []
 paths:
+  /api/v1/assets:
+    get:
+      operationId: listVisibleAssets
+      responses:
+        '200': {description: Assets visible to this principal}
+    post:
+      operationId: registerAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId, appId, environmentName, zoneId, agentId, displayName, members]
+              additionalProperties: false
+              properties:
+                assetId: {type: string}
+                appId: {type: string}
+                environmentName: {type: string}
+                zoneId: {type: string}
+                agentId: {type: string}
+                displayName: {type: string}
+                members: {type: array, items: {type: string}}
+      responses:
+        '201': {description: Asset created}
+  /api/v1/assets/{id}/jvms:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listRegisteredTargets
+      responses:
+        '200': {description: Visible registered targets}
+    post:
+      operationId: registerTarget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetId, fingerprint, javaFeature]
+              additionalProperties: false
+              properties:
+                targetId: {type: string}
+                fingerprint: {type: string}
+                javaFeature: {type: integer, minimum: 8}
+      responses:
+        '201': {description: Target registered}
+  /api/v1/grants:
+    post:
+      operationId: requestGrant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetId, capabilities, ticketId, requestedUntil]
+              additionalProperties: false
+              properties:
+                targetId: {type: string}
+                capabilities: {type: array, items: {const: JVM_OVERVIEW}}
+                ticketId: {type: string}
+                requestedUntil: {type: integer, description: Expiry in Unix milliseconds}
+      responses:
+        '201': {description: Pending grant created}
+  /api/v1/grants/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getGrant
+      responses:
+        '200': {description: Current grant and revision}
+  /api/v1/grants/{id}/decisions:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: decideGrant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, decision, reasonCode, expectedRevision]
+              additionalProperties: false
+              properties:
+                eventId: {type: string}
+                decision: {enum: [APPROVE, DENY, REVOKE]}
+                reasonCode: {type: string}
+                expectedRevision: {type: integer, minimum: 1}
+      responses:
+        '200': {description: Grant after the decision}
+        '409': {description: Revision or duplicate event conflict}
   /api/v1/sessions:
     post:
       operationId: openSession
@@ -19,21 +113,40 @@ paths:
               required: [targetId, grantId]
               properties:
                 targetId: {type: string}
-                grantId: {type: string}
+                grantId: {type: string, format: uuid}
       responses:
         '202':
-          description: Session initialization accepted.
+          description: Session accepted
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Session'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '409': {$ref: '#/components/responses/Conflict'}
-  /api/v1/sessions/{sessionId}/tasks:
+        '403': {description: Grant unavailable for this principal or target}
+        '409': {description: Target generation unavailable}
+  /api/v1/sessions/{id}:
     parameters:
-      - name: sessionId
-        in: path
-        required: true
-        schema: {type: string}
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Session state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+    delete:
+      operationId: closeSession
+      responses:
+        '200': {description: Session closed; target cleanup is asynchronous}
+  /api/v1/sessions/{id}/heartbeat:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: renewSession
+      responses:
+        '200': {description: Session extended within grant expiry}
+  /api/v1/sessions/{id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/Id'
     post:
       operationId: submitTask
       parameters:
@@ -46,90 +159,116 @@ paths:
         content:
           application/json:
             schema:
-              oneOf:
-                - type: object
-                  additionalProperties: false
-                  required: [capability]
-                  properties:
-                    capability: {const: JVM_OVERVIEW}
-                - type: object
-                  additionalProperties: false
-                  required: [capability, parameters]
-                  properties:
-                    capability: {const: METHOD_WATCH}
-                    parameters:
-                      type: object
-                      additionalProperties: false
-                      required: [className, methodName, classLoaderRef]
-                      properties:
-                        className: {type: string, minLength: 1}
-                        methodName: {type: string, minLength: 1}
-                        classLoaderRef: {type: string, minLength: 1}
-                        durationSec: {type: integer, minimum: 1, maximum: 60}
-                        maxSamples: {type: integer, minimum: 1, maximum: 10}
+              type: object
+              additionalProperties: false
+              required: [capability]
+              properties:
+                capability: {const: JVM_OVERVIEW}
       responses:
         '202':
-          description: Task accepted, or the original task for an identical idempotent request.
+          description: Task accepted or matching prior task
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Task'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '409': {$ref: '#/components/responses/Conflict'}
-  /api/v1/tasks/{taskId}:
+        '409': {description: Session not ready or target occupied}
+  /api/v1/tasks/{id}:
     parameters:
-      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/Id'
     get:
       operationId: getTask
       responses:
         '200':
-          description: Current task and confirmed execution state.
+          description: Confirmed task state and permitted snapshot
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Task'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-  /api/v1/tasks/{taskId}/cancel:
+        '403': {description: Task or grant not available to this principal}
+  /api/v1/tasks/{id}/cancel:
     parameters:
-      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/Id'
     post:
       operationId: requestCancellation
       responses:
-        '202':
-          description: Cancellation intent accepted. Termination is confirmed separately.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Task'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '202': {description: Cancellation accepted}
+  /api/v1/edge/claims:
+    post:
+      operationId: claimOperation
+      responses:
+        '200': {description: Operation bound to the authenticated executor}
+        '204': {description: No eligible operation}
+  /api/v1/edge/operations/{id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: completeOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [leaseToken, completion]
+              properties:
+                leaseToken: {type: string, format: uuid}
+                completion: {enum: [ATTACHED, DONE, STOPPED, RELEASED, FAILED, UNKNOWN, TARGET_GONE]}
+                result: {$ref: '#/components/schemas/Snapshot'}
+      responses:
+        '204': {description: Completion recorded}
+        '409': {description: Lease, generation, operation state or completion conflict}
+  /api/v1/audit/events:
+    get:
+      operationId: listTargetAudit
+      parameters:
+        - name: targetId
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Audit events for the target}
 components:
   parameters:
-    TaskId:
-      name: taskId
+    Id:
+      name: id
       in: path
       required: true
       schema: {type: string}
   securitySchemes:
-    browserSession:
-      type: apiKey
-      in: cookie
-      name: DIAGNOSTIC_SESSION
-  responses:
-    Forbidden:
-      description: The user is not authorized for the target or capability.
-    Conflict:
-      description: Target changed, task slot occupied, or idempotency key reused with different parameters.
+    bearerToken: {type: http, scheme: bearer}
   schemas:
     Session:
       type: object
-      required: [sessionId, targetId, state]
+      required: [sessionId, targetId, grantId, state, generation, expiresAt]
       properties:
-        sessionId: {type: string}
+        sessionId: {type: string, format: uuid}
         targetId: {type: string}
+        grantId: {type: string, format: uuid}
+        actorId: {type: string}
         state: {enum: [OPENING, ACTIVE, CLOSED, EXPIRED, REVOKED, TARGET_GONE]}
+        generation: {type: integer}
+        expiresAt: {type: integer}
     Task:
       type: object
-      required: [taskId, targetId, state]
+      required: [taskId, targetId, capability, state, generation, deadlineAt]
       properties:
-        taskId: {type: string}
+        taskId: {type: string, format: uuid}
         targetId: {type: string}
+        capability: {const: JVM_OVERVIEW}
         state:
           enum: [QUEUED, DISPATCHING, RUNNING, CANCEL_REQUESTED, RECONCILING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT]
+        generation: {type: integer}
+        deadlineAt: {type: integer}
+        result:
+          anyOf:
+            - $ref: '#/components/schemas/Snapshot'
+            - {type: 'null'}
+    Snapshot:
+      type: object
+      additionalProperties: false
+      required: [heapUsedBytes, heapCommittedBytes, nonHeapUsedBytes, uptimeMillis, threadCount]
+      properties:
+        heapUsedBytes: {type: integer, minimum: 0}
+        heapCommittedBytes: {type: integer, minimum: 0}
+        nonHeapUsedBytes: {type: integer, minimum: 0}
+        uptimeMillis: {type: integer, minimum: 0}
+        threadCount: {type: integer, minimum: 0}

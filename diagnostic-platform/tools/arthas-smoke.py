@@ -151,7 +151,7 @@ def stop_fixture_arthas(call, pid, port):
     await_condition("Arthas listener did not close", lambda: not owned_listener(pid, port))
 
 
-def run(jdk, archive, sha256, classes, mode):
+def run(jdk, archive, sha256, classes, mode, exercise=None):
     password = secrets.token_urlsafe(32)
     encoded = base64.b64encode(f"fixture:{password}".encode()).decode()
     java = str(jdk / "bin" / "java")
@@ -215,12 +215,20 @@ def run(jdk, archive, sha256, classes, mode):
                     request(pid, ticks, port, None, "exec", command="version")[0] in (401, 403),
                     "Unauthenticated local requests must be rejected",
                 )
-                try:
-                    version = observe_and_cancel(call)
-                finally:
+                def release():
                     stop_fixture_arthas(call, pid, port)
+
+                try:
+                    if exercise is None:
+                        version = observe_and_cancel(call)
+                        message = f"Arthas {version}, local auth, JVM snapshot, watch intercept/cancel"
+                    else:
+                        message = exercise(call, release, f"fixture:{pid}:{ticks}")
+                finally:
+                    if owned_listener(pid, port) and process_start_ticks(pid) == ticks:
+                        release()
                 require(fixture.poll() is None and process_start_ticks(pid) == ticks, "Fixture JVM restarted or exited")
-                print(f"PASS ({mode}): Arthas {version}, local auth, JVM snapshot, watch intercept/cancel, listener closed, JVM alive")
+                print(f"PASS ({mode}): {message}, listener closed, JVM alive")
             finally:
                 if fixture.poll() is None:
                     fixture.terminate()

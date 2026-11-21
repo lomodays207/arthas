@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: ['8', '17']
+        java: ['8', '11', '17', '21', '25']
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -27,7 +27,9 @@ jobs:
           java-version: '17'
       - name: Build and test
         working-directory: diagnostic-platform
-        run: mvn -B verify
+        run: |
+          mvn -B verify
+          printf 'PLATFORM_JAVA=%s/bin/java\n' "$JAVA_HOME" >> "$GITHUB_ENV"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
           distribution: corretto
@@ -35,6 +37,7 @@ jobs:
       - name: Validate dynamic attach and cleanup on a synthetic JVM
         working-directory: diagnostic-platform
         env:
+          TARGET_FEATURE: ${{ matrix.java }}
           ARTHAS_ZIP_SHA256: 2f75ea954ead5d02c4a743ecd783fd92f546a44ef3aee437ea5066eb30ad07bf
         run: |
           archive="$RUNNER_TEMP/arthas-4.3.5.zip"
@@ -43,3 +46,41 @@ jobs:
             -o "$archive"
           python3 tools/arthas-smoke.py --jdk "$JAVA_HOME" --arthas-zip "$archive" \
             --sha256 "$ARTHAS_ZIP_SHA256" --classes fixtures/target/classes
+
+          python3 tools/control-plane-smoke.py --platform-java "$PLATFORM_JAVA" \
+            --platform-jar platform-api/target/platform-api-0.1.0-SNAPSHOT.jar \
+            --jdk "$JAVA_HOME" --java-feature "$TARGET_FEATURE" --arthas-zip "$archive" \
+            --sha256 "$ARTHAS_ZIP_SHA256" --classes fixtures/target/classes
+
+  mysql:
+    name: MySQL 8 control-plane integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: fixture-root
+          MYSQL_DATABASE: diagnostic_fixture
+          MYSQL_USER: fixture
+          MYSQL_PASSWORD: fixture-password
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s --health-timeout=3s --health-retries=15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          distribution: corretto
+          java-version: '17'
+      - name: Test Flyway migration and transactional API
+        working-directory: diagnostic-platform
+        env:
+          TEST_DATABASE_URL: jdbc:mysql://127.0.0.1:${{ job.services.mysql.ports[3306] }}/diagnostic_fixture?sslMode=DISABLED&allowPublicKeyRetrieval=true
+          TEST_DATABASE_USER: fixture
+          TEST_DATABASE_PASSWORD: fixture-password
+        run: mvn -B verify

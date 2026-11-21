@@ -1,6 +1,6 @@
 # Arthas 在线诊断平台
 
-首批开发版本包含 Java 17 平台 API 与网关工程、Java 8 字节码诊断样例、Arthas 冒烟检验和首版接口契约。平台和网关当前提供独立启动与健康检查。业务 API、租约调度、持久化和正式主机代理在后续任务实现。
+当前版本包含 Java 17 平台 API、网关工程、Java 8 兼容的诊断样例和自动化验收。平台已实现资产登记、授权审批、诊断会话、`JVM_OVERVIEW` 任务、持久队列与审计。网关当前提供健康检查。合成应用联调通过受限执行端接口驱动，正式主机代理、网关 mTLS 接入、动态方法任务和诊断工作台在后续实现。
 
 ## 构建与健康检查
 
@@ -15,8 +15,12 @@ curl -fsS http://127.0.0.1:8080/actuator/health
 curl -fsS http://127.0.0.1:8081/actuator/health
 ```
 
-- [平台 OpenAPI 草案](docs/openapi.yaml)
-- [网关协议草案](docs/gateway-contract.md)
+- [平台 OpenAPI](docs/openapi.yaml)
+- [执行端接口与网关协议](docs/gateway-contract.md)
+
+控制面默认监听回环地址，使用文件型 H2 保存数据，Flyway 启动时执行迁移。使用 MySQL 8.0 时配置 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD`。角色令牌通过环境变量 `DIAGNOSTIC_ADMIN_TOKEN`、`DIAGNOSTIC_APPROVER_TOKEN`、`DIAGNOSTIC_OPERATOR_TOKEN`、`DIAGNOSTIC_OPERATOR2_TOKEN` 和 `DIAGNOSTIC_EXECUTOR_TOKEN` 分别注入，每项配置独立的高熵令牌。未配置的角色不可访问 API。默认执行端 ID 为 `local-agent`，可用 `DIAGNOSTIC_EXECUTOR_ID` 调整。当前为回环联调配置。
+
+`tools/control-plane-smoke.py` 启动隔离的平台实例与合成应用，验证登记、审批、会话、真实 JVM 快照、端点回收及审计。GitHub Actions 运行动态附着与控制面联调，并单独用 MySQL 8.0 验证迁移和控制面流程。
 
 ## 在 Linux 测试主机验证 Arthas
 
