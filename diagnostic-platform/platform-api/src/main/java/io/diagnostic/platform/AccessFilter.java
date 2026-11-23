@@ -18,7 +18,7 @@ import java.util.List;
 final class AccessFilter extends OncePerRequestFilter {
     static final String ACTOR = "io.diagnostic.platform.actor";
 
-    enum Role { ADMIN, APPROVER, OPERATOR, EXECUTOR, INTEGRATION }
+    enum Role { ADMIN, APPROVER, OPERATOR, EXECUTOR, INTEGRATION, RESPONDER }
 
     record Actor(String id, Role role, @com.fasterxml.jackson.annotation.JsonIgnore long expiresAt) {
         Actor(String id, Role role) { this(id,role,Long.MAX_VALUE); }
@@ -43,12 +43,14 @@ final class AccessFilter extends OncePerRequestFilter {
             @Value("${diagnostic.auth.executor-token}") String executor,
             @Value("${diagnostic.auth.executor-id}") String executorId,
             @Value("${DIAGNOSTIC_ITSM_TOKEN:}") String itsm,
+            @Value("${DIAGNOSTIC_RESPONDER_TOKEN:}") String responder,
             @Value("${DIAGNOSTIC_AGENT_TOKENS:}") String agentTokens) {
         this.identity=identity;
         register(admin, new Actor("admin", Role.ADMIN));
         register(approver, new Actor("approver", Role.APPROVER));
         register(operator, new Actor("operator", Role.OPERATOR));
         register(operator2, new Actor("operator2", Role.OPERATOR));
+        register(responder,new Actor("responder",Role.RESPONDER));
         register(itsm,new Actor("itsm",Role.INTEGRATION));
         register(executor, new Actor(executorId, Role.EXECUTOR));
         if (!agentTokens.isBlank()) {

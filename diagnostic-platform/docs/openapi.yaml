@@ -230,6 +230,46 @@ paths:
       operationId: requestCancellation
       responses:
         '202': {description: Cancellation accepted}
+  /api/v1/targets/{id}/control:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: inspectTargetControl
+      responses:
+        '200': {description: Current attachment generation and state}
+  /api/v1/targets/{id}/drain:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: emergencyRelease
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [generation,ticketId]
+              properties:
+                generation: {type: integer, minimum: 1}
+                ticketId: {type: string, maxLength: 100}
+      responses:
+        '202': {description: Emergency release accepted for this generation}
+  /api/v1/edge/operations/{id}/authority:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: pollExecutionAuthority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leaseToken]
+              properties:
+                leaseToken: {type: string}
+      responses:
+        '200': {description: Current permission to continue sampling and hard deadline}
   /api/v1/edge/claims:
     post:
       operationId: claimOperation
@@ -444,6 +484,7 @@ components:
       additionalProperties: false
       properties:
         threadId: {type: integer, minimum: 1}
+        threadState: {enum: [NEW, RUNNABLE, BLOCKED, WAITING, TIMED_WAITING, TERMINATED]}
         className: {type: string}
         methodName: {type: string}
         loader: {type: string, pattern: '^[a-f0-9]{1,8}$'}
@@ -460,6 +501,7 @@ components:
       additionalProperties: false
       properties:
         threadId: {type: integer}
+        ownerThreadId: {type: integer}
         className: {type: string}
         methodName: {type: string}
         loader: {type: string}
@@ -481,3 +523,8 @@ components:
         nonHeapUsedBytes: {type: integer, minimum: 0}
         uptimeMillis: {type: integer, minimum: 0}
         threadCount: {type: integer, minimum: 0}
+        gcCount: {type: integer, minimum: 0}
+        gcMillis: {type: integer, minimum: 0}
+        processors: {type: integer, minimum: 1}
+        systemLoadAverage: {type: number, minimum: 0}
+        deadlockedThreads: {type: integer, minimum: 0}

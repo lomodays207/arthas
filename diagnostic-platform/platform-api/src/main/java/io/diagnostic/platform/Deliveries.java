@@ -47,7 +47,7 @@ class Deliveries {
                     WHERE active.target_id = o.target_id AND active.state = 'CLAIMED'
                     AND active.lease_until > ?
                 )
-                ORDER BY o.target_id, o.available_at, o.created_at, o.operation_id LIMIT 20
+                ORDER BY CASE WHEN o.operation_type='EMERGENCY_RELEASE' THEN 0 ELSE 1 END,o.target_id, o.available_at, o.created_at, o.operation_id LIMIT 20
                 """, actor.id(), store.now(), store.now())) {
             dispatch.lock(candidate.targetId());
             dispatch.expire(candidate.targetId());
@@ -143,6 +143,12 @@ class Deliveries {
         }
         switch (operation.operationType()) {
             case ATTACH -> completeAttach(control, input.completion());
+            case EMERGENCY_RELEASE -> {
+                if (input.completion()!=Completion.RELEASED && input.completion()!=Completion.TARGET_GONE)
+                    throw ApiError.invalid("INVALID_RELEASE_COMPLETION");
+                reportRelease(actor,control.targetId(),control.generation());
+                if (input.completion()==Completion.TARGET_GONE) dispatch.setAttachState(control.targetId(),control.generation(),"TARGET_GONE");
+            }
             case RELEASE -> completeRelease(control, input.completion());
             case SNAPSHOT, CANCEL -> completeTask(operation, input.completion(), result);
         }
@@ -156,6 +162,23 @@ class Deliveries {
         store.audit(actor.id(), "OPERATION_COMPLETED", control.targetId(), null, operation.taskId(),
                 input.completion().name());
         dispatch.scheduleReleaseIfIdle(control.targetId());
+    }
+
+    record Authority(boolean permitted,long until) {}
+
+    @Transactional
+    public Authority authority(AccessFilter.Actor actor,String id,String token) {
+        actor.require(EXECUTOR);
+        Operation operation=operation(id);
+        if (!actor.id().equals(operation.agentId()) || !token.equals(operation.leaseToken())) throw ApiError.forbidden();
+        Control control=dispatch.lock(operation.targetId());
+        dispatch.expire(control.targetId());
+        operation=operation(id);
+        if (operation.generation()!=control.generation() || operation.operationType()!=OperationType.SNAPSHOT ||
+                !operation.state().equals("CLAIMED")) return new Authority(false,0);
+        Task task=dispatch.task(operation.taskId());
+        long until=Math.min(operation.leaseUntil(),task.deadlineAt());
+        return new Authority(task.cancelReason()==null && until>store.now() && control.attachState().equals("READY"),until);
     }
 
     @Transactional

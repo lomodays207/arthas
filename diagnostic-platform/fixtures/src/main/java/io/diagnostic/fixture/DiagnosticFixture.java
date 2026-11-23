@@ -17,6 +17,15 @@ public final class DiagnosticFixture {
                 .getDeclaredConstructor().newInstance();
         startLoad(workload,Boolean.getBoolean("diagnostic.fixture.measure"));
         startBlockedThread();
+        try {
+            Thread.class.getMethod("startVirtualThread",Runnable.class).invoke(null,(Runnable)() -> {
+                try { new CountDownLatch(1).await(); }
+                catch (InterruptedException stop) { Thread.currentThread().interrupt(); }
+            });
+            System.out.println("FIXTURE_VIRTUAL_THREAD_STARTED");
+        } catch (NoSuchMethodException olderJdk) {
+            // Baseline fixture also runs on Java 8, 11 and 17.
+        }
         System.out.println("FIXTURE_READY");
         new CountDownLatch(1).await();
         System.out.println(isolated);

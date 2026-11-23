@@ -49,6 +49,11 @@ final class EdgeGateway {
         return forward(request, "claims", false);
     }
 
+    @PostMapping("/operations/{id}/authority")
+    ResponseEntity<byte[]> authority(HttpServletRequest request,@PathVariable UUID id) throws Exception {
+        return forward(request,"operations/"+id+"/authority",true);
+    }
+
     @PostMapping("/operations/{id}/complete")
     ResponseEntity<byte[]> complete(HttpServletRequest request, @PathVariable UUID id) throws Exception {
         return forward(request, "operations/" + id + "/complete", true);

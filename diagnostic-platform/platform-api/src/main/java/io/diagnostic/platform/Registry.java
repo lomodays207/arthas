@@ -43,7 +43,7 @@ class Registry {
     }
 
     public List<Asset> assets(AccessFilter.Actor actor) {
-        if (actor.role() == ADMIN || actor.role() == APPROVER) {
+        if (actor.role() == ADMIN || actor.role() == APPROVER || actor.role()==RESPONDER) {
             return store.list(Asset.class, "SELECT * FROM asset_instance ORDER BY asset_id LIMIT 200");
         }
         actor.require(OPERATOR);
@@ -69,7 +69,7 @@ class Registry {
 
     public List<Candidate> candidates(AccessFilter.Actor actor, String assetId) {
         asset(assetId);
-        if (actor.role() != ADMIN && actor.role() != APPROVER) {
+        if (actor.role() != ADMIN && actor.role() != APPROVER && actor.role()!=RESPONDER) {
             actor.require(OPERATOR);
             requireMember(assetId, actor.id());
         }

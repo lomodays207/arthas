@@ -51,6 +51,7 @@ options('requested', capOptions(Object.keys(caps)), 'key', x => x.label);
 el('requested').options[0].selected = true;
 function fields() {
   const cap = el('capability').value;
+  show('stateField',cap === 'THREAD_LIST');
   show('threadField',cap === 'THREAD_DETAIL');
   show('methodFields',cap === 'CODE_VIEW' || cap === 'CLASS_METHOD_LOOKUP' || cap.startsWith('METHOD_'));
 }
@@ -58,7 +59,7 @@ action('capability',fields,'change');
 action('login', async () => {
   token = el('token').value;
   const me = await api('/me');
-  if (!['ADMIN','OPERATOR','APPROVER'].includes(me.role)) throw Error('此身份无法进入工作台');
+  if (!['ADMIN','OPERATOR','APPROVER','RESPONDER'].includes(me.role)) throw Error('此身份无法进入工作台');
   const assets = await api('/assets');
   options('asset', assets, 'assetId', a => a.displayName + ' · ' + a.environmentName);
   const params = new URLSearchParams(location.search);
@@ -70,12 +71,13 @@ action('login', async () => {
   }
   el('ticket').value = (params.get('ticket') || '').slice(0,100);
   show('management',me.role === 'ADMIN'); show('sharing',me.role === 'OPERATOR');
-  if (me.role !== 'ADMIN') await refresh();
+  if (['OPERATOR','APPROVER'].includes(me.role)) await refresh();
+  show('emergency',me.role === 'RESPONDER');
   el('token').value = '';
   for (const id of ['assets','logout','history']) show(id, true);
   show('login', false); show('audit', me.role === 'ADMIN');
   show('operator', me.role === 'OPERATOR'); show('open', me.role === 'OPERATOR');
-  show('approvals', me.role !== 'ADMIN'); show('decisions', me.role === 'APPROVER');
+  show('approvals', ['OPERATOR','APPROVER'].includes(me.role)); show('decisions', me.role === 'APPROVER');
   record(me.id + ' 已登录');
 }, 'submit');
 action('asset', targets, 'change');
@@ -113,20 +115,28 @@ function renderTask(t) {
     const table = document.createElement('table');
     const keys = [...new Set(ev.rows.flatMap(row => Object.keys(row)))];
     const header = table.createTHead().insertRow();
-    const names = {threadId:'线程 ID',cpuPercent:'CPU %',state:'状态',className:'类',methodName:'方法',
+    const names = {threadId:'线程 ID',ownerThreadId:'持锁线程 ID',cpuPercent:'CPU %',state:'状态',className:'类',methodName:'方法',
       loader:'加载器',descriptor:'方法描述符',costMs:'耗时 (ms)',success:'成功',failed:'失败',line:'源代码行',depth:'调用层级'};
     for (const key of keys) header.appendChild(document.createElement('th')).textContent = names[key] || key;
     for (const row of ev.rows) {
       const tr = table.insertRow(); for (const key of keys) tr.insertCell().textContent = row[key] ?? '';
+      if (row.className && row.methodName && [...el('capability').options].some(o=>o.value==='CLASS_METHOD_LOOKUP')) {
+        const button=document.createElement('button'); button.textContent='定位方法';
+        button.onclick=()=>{el('capability').value='CLASS_METHOD_LOOKUP'; fields(); el('className').value=row.className;
+          el('methodName').value=row.methodName; el('loader').value=row.loader || '';};
+        tr.insertCell().append(button);
+      }
     }
     el('observations').append(table);
   }
   if (!t.result) return;
   const labels = {heapUsedBytes:'已用堆（字节）',heapCommittedBytes:'已提交堆（字节）',
-    nonHeapUsedBytes:'已用非堆（字节）',threadCount:'线程数',uptimeMillis:'运行时间（毫秒）'};
+    nonHeapUsedBytes:'已用非堆（字节）',threadCount:'线程数',uptimeMillis:'运行时间（毫秒）',gcCount:'GC 次数',gcMillis:'GC 总耗时（毫秒）',
+    processors:'可用处理器',systemLoadAverage:'系统平均负载',deadlockedThreads:'死锁线程数'};
   el('metrics').replaceChildren();
   for (const [k,label] of Object.entries(labels)) {
     const name = document.createElement('dt'), value = document.createElement('dd');
+    if (t.result[k] == null) continue;
     name.textContent = label; value.textContent = t.result[k].toLocaleString(); el('metrics').append(name,value);
   }
 }
@@ -138,6 +148,7 @@ async function monitor(id) {
     session = fresh; el('sessionState').textContent = session.targetId+' · '+session.state;
     if (!el('shared').hidden && session.state === 'ACTIVE') {
       const overview = await api(sessionUrl()+'/overview');
+      if (el('subscribe').checked && overview.stale && !overview.pending) await api(sessionUrl()+'/overview','POST');
       if (overview.result) el('overview').textContent =
         (overview.stale?'上次快照':'共享快照')+' · '+new Date(overview.receivedAt).toLocaleTimeString()+' · '+
         '堆内存 '+Math.round(overview.result.heapUsedBytes/1048576)+' MiB · '+overview.result.threadCount+' 个线程';
@@ -153,6 +164,7 @@ action('open', async () => {
   session = await api('/sessions','POST',{targetId:g.targetId,grantId:g.grantId});
   options('capability',capOptions(g.capabilities.split(',')),'key',x=>x.label); fields();
   show('shared',g.capabilities.split(',').includes('JVM_OVERVIEW')); el('overview').textContent='';
+  show('subscribeBox',!el('shared').hidden); el('subscribe').checked=false;
   show('workspace',true); await monitor(session.sessionId);
 });
 async function follow(id) {
@@ -196,6 +208,7 @@ action('sample', async () => {
   pendingKey ||= crypto.randomUUID();
   const capability = el('capability').value;
   let criteria;
+  if (capability === 'THREAD_LIST' && el('threadState').value) criteria={threadState:el('threadState').value};
   if (capability === 'THREAD_DETAIL') criteria = {threadId:Number(el('threadId').value)};
   if (capability === 'CODE_VIEW' || capability === 'CLASS_METHOD_LOOKUP' || capability.startsWith('METHOD_')) {
     criteria = {className:el('className').value.trim(),methodName:el('methodName').value.trim() || null,
@@ -257,4 +270,15 @@ action('readSource',async()=>{
   const value=await api('/tasks/'+path(task.taskId)+'/source');
   el('source').textContent=value.source;
   clearTimeout(previewTimer); previewTimer=setTimeout(()=>{el('source').textContent='';},60000);
+});
+
+let inspected;
+action('inspect',async()=>{
+  inspected=await api('/targets/'+path(el('target').value)+'/control');
+  el('control').textContent=inspected.targetId+' · '+inspected.generation+' · '+inspected.attachState;
+});
+action('drain',async()=>{
+  if (!inspected || inspected.targetId!==el('target').value) throw Error('请先核对目标代次');
+  await api('/targets/'+path(inspected.targetId)+'/drain','POST',{generation:inspected.generation,ticketId:el('drainTicket').value.trim()});
+  record(inspected.targetId+' · 已请求关闭该代次'); inspected=null;
 });

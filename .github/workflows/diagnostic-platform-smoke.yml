@@ -25,10 +25,12 @@ jobs:
         with:
           distribution: corretto
           java-version: '17'
+          cache: maven
+          cache-dependency-path: 'diagnostic-platform/**/pom.xml'
       - name: Build and test
         working-directory: diagnostic-platform
         run: |
-          mvn -B verify
+          python3 tools/ci-build.py
           printf 'PLATFORM_JAVA=%s/bin/java\n' "$JAVA_HOME" >> "$GITHUB_ENV"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
@@ -96,10 +98,12 @@ jobs:
         with:
           distribution: corretto
           java-version: '17'
+          cache: maven
+          cache-dependency-path: 'diagnostic-platform/**/pom.xml'
       - name: Test Flyway migration and transactional API
         working-directory: diagnostic-platform
         env:
           TEST_DATABASE_URL: jdbc:mysql://127.0.0.1:${{ job.services.mysql.ports[3306] }}/diagnostic_fixture?sslMode=DISABLED&allowPublicKeyRetrieval=true
           TEST_DATABASE_USER: fixture
           TEST_DATABASE_PASSWORD: fixture-password
-        run: mvn -B verify
+        run: python3 tools/ci-build.py

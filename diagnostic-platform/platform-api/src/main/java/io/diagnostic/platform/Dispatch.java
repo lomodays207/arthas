@@ -206,6 +206,22 @@ class Dispatch {
         return view(current);
     }
 
+    @Transactional
+    public void emergency(AccessFilter.Actor actor,String target,long generation,String ticket) {
+        actor.require(AccessFilter.Role.RESPONDER);
+        Control control=lock(target);
+        if (control.generation()!=generation) throw ApiError.conflict("GENERATION_CHANGED");
+        if (List.of("RELEASED","TARGET_GONE").contains(control.attachState())) return;
+        for (Session session:store.list(Session.class,"SELECT * FROM diagnosis_session WHERE target_id=? AND generation=? AND state IN ('OPENING','ACTIVE')",target,generation))
+            closeSession(session,"CLOSED",actor.id());
+        int existing=store.count("SELECT COUNT(*) FROM operation_outbox WHERE target_id=? AND generation=? AND operation_type='EMERGENCY_RELEASE' AND state IN ('PENDING','CLAIMED')",target,generation);
+        if (existing==0) {
+            setAttachState(target,generation,"DRAINING");
+            enqueue(target,generation,OperationType.EMERGENCY_RELEASE,null,store.now());
+            store.audit(actor.id(),"EMERGENCY_RELEASE_REQUESTED",target,null,null,ticket);
+        }
+    }
+
     void revoke(Control control, String grantId) {
         for (Session session : store.list(Session.class, """
                 SELECT * FROM diagnosis_session WHERE grant_id = ? AND state IN ('ACTIVE','OPENING')
@@ -263,7 +279,7 @@ class Dispatch {
                 """, target, now)) {
             store.write("UPDATE operation_outbox SET state = 'UNCERTAIN' WHERE operation_id = ?", operation.operationId());
             switch (operation.operationType()) {
-                case ATTACH, RELEASE -> setAttachState(target, operation.generation(), "RECONCILING");
+                case ATTACH, RELEASE, EMERGENCY_RELEASE -> setAttachState(target, operation.generation(), "RECONCILING");
                 case SNAPSHOT, CANCEL -> {
                     Task task = task(operation.taskId());
                     if (task.state() == TaskState.DISPATCHING || task.state() == TaskState.CANCEL_REQUESTED) {

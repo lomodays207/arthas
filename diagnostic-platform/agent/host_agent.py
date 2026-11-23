@@ -6,6 +6,7 @@ import shutil
 import signal
 import fcntl
 import hashlib
+import tempfile
 import http.client
 import json
 import os
@@ -93,14 +94,41 @@ class Agent:
         auth = base64.b64encode(("agent:"+row["password"]).encode()).decode()
         return native.request(self.pid, native.process_start_ticks(self.pid), row["port"], auth, action, **args)
 
+    def prepare_media(self, generation):
+        archive=Path(self.cfg["archive"])
+        digest=self.cfg["sha256"]
+        with archive.open("rb") as file:
+            native.require(hashlib.file_digest(file,"sha256").hexdigest()==digest,"Arthas archive digest mismatch")
+        cache=self.root/("distribution-"+digest)
+        if not cache.is_dir():
+            with tempfile.TemporaryDirectory(dir=self.root) as scratch:
+                staging=Path(scratch)/"unpacked"
+                staging.mkdir()
+                native.unpack(archive,digest,staging)
+                staging.rename(cache)
+        # Keep classpath-local properties private to this attach generation.
+        package=self.root/("media-"+str(generation))
+        shutil.copytree(cache,package,copy_function=os.link,ignore=shutil.ignore_patterns("arthas.properties"))
+        return package
+
+    def external_media(self):
+        for descriptor in Path(f"/proc/{self.pid}/fd").iterdir():
+            try:
+                target=Path(os.readlink(descriptor).removesuffix(" (deleted)"))
+            except FileNotFoundError:
+                continue
+            if target.name in ("arthas-core.jar","arthas-agent.jar") and not target.is_relative_to(self.root):
+                return True
+        return False
+
     def attach(self, op):
         gen = op["generation"]
         prev = self.db.execute("SELECT * FROM instance ORDER BY generation DESC LIMIT 1").fetchone()
         if prev and (prev["generation"] >= gen or prev["state"] != "CLOSED"):
             return "UNKNOWN", None
-        package = self.root / ("media-"+str(gen))
-        package.mkdir(mode=0o700)
-        native.unpack(Path(self.cfg["archive"]), self.cfg["sha256"], package)
+        if self.external_media():
+            return "FAILED", None
+        package = self.prepare_media(gen)
         with socket.socket() as sock:
             sock.bind((native.HOST, 0))
             port = sock.getsockname()[1]
@@ -150,13 +178,13 @@ class Agent:
         except FileNotFoundError:
             same = False
         if not same:
-            return ("TARGET_GONE" if op["type"] in ("ATTACH","RELEASE") else "FAILED"), None
+            return ("TARGET_GONE" if op["type"] in ("ATTACH","RELEASE","EMERGENCY_RELEASE") else "FAILED"), None
         if op["type"] == "ATTACH":
             return self.attach(op)
         row = self.db.execute("SELECT * FROM instance WHERE generation=?",(op["generation"],)).fetchone()
         if not row:
             return "UNKNOWN", None
-        if op["type"] == "RELEASE":
+        if op["type"] in ("RELEASE","EMERGENCY_RELEASE"):
             return self.release(row)
         if op["type"] == "CANCEL":
             # A serial worker cannot be running another request. An interrupted native query
@@ -169,6 +197,11 @@ class Agent:
             return ("STOPPED" if row["state"] == "CLOSED" else "UNKNOWN"), None
         if (op["type"] == "SNAPSHOT" and row["state"] == "READY" and
                 time.time()*1000 < min(op["taskDeadline"],op["leaseUntil"])):
+            def permitted():
+                proof = self.edge("operations/"+op["operationId"]+"/authority",{"leaseToken":op["leaseToken"]})
+                return proof["permitted"]
+            if not permitted():
+                return "FAILED", None
             def call(action, **args):
                 return self.call(row,action,**args)
             if op.get("capability") in (None,"JVM_OVERVIEW"):
@@ -185,7 +218,7 @@ class Agent:
             if params.get("className") and params["className"]+"#"+params["methodName"] not in self.cfg.get("allowedMethods",[]):
                 return "FAILED", None
             return "DONE", diagnostic(call,op["capability"],op["criteria"],self.cfg.get("allowedMethods",[]),
-                                      min(op["leaseUntil"],op["taskDeadline"]))
+                                      min(op["leaseUntil"],op["taskDeadline"]),permitted)
         return "UNKNOWN", None
 
     def tick(self):

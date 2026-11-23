@@ -41,6 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "diagnostic.auth.operator2-token=synthetic-operator2-token-for-testing",
         "diagnostic.auth.executor-token=synthetic-executor-token-for-testing",
         "DIAGNOSTIC_CODE_VIEW_APPS=synthetic",
+        "DIAGNOSTIC_RESPONDER_TOKEN=synthetic-responder-token-for-testing",
         "DIAGNOSTIC_ITSM_TOKEN=synthetic-itsm-token-for-testing-123",
         "diagnostic.sweep-delay-ms=3600000"
 })
@@ -118,6 +119,26 @@ class ControlPlaneTest {
         read(get("/api/v1/tasks/" + task), "operator").andExpect(status().isForbidden());
         read(get("/api/v1/audit/events").param("targetId", "jvm"), "admin")
                 .andExpect(status().isOk()).andExpect(jsonPath("$[?(@.action == 'GRANT_REVOKED')]").isNotEmpty());
+    }
+
+    @Test
+    void emergencyDrainRequiresItsOwnRoleAndFencesLateEvidence() throws Exception {
+        String session=open(approvedGrant("operator"),"operator","OPENING");
+        complete(claim("ATTACH"),"ATTACHED",null);
+        String task=submit(session,"sample");
+        JsonNode operation=claim("SNAPSHOT");
+        String auth="/api/v1/edge/operations/"+operation.get("operationId").asText()+"/authority";
+        var lease=Map.of("leaseToken",operation.get("leaseToken").asText());
+        write(post(auth),"executor",lease).andExpect(jsonPath("$.permitted").value(true));
+        var drain=Map.of("generation",1,"ticketId","incident");
+        write(post("/api/v1/targets/jvm/drain"),"admin",drain).andExpect(status().isForbidden());
+        write(post("/api/v1/targets/jvm/drain"),"responder",drain).andExpect(status().isAccepted());
+        write(post(auth),"executor",lease).andExpect(jsonPath("$.permitted").value(false));
+        clock.advance(13000);
+        complete(claim("EMERGENCY_RELEASE"),"RELEASED",null);
+        ack(operation,"DONE",snapshotResult()).andExpect(status().isConflict());
+        read(get("/api/v1/tasks/"+task),"operator").andExpect(jsonPath("$.result").doesNotExist());
+        read(get("/api/v1/targets/jvm/control"),"responder").andExpect(jsonPath("$.attachState").value("RELEASED"));
     }
 
     @Test

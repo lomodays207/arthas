@@ -51,6 +51,12 @@ class Operations {
                 """,store.now()-15000);
     }
 
+    @GetMapping("/targets/{id}/control")
+    Records.Control control(@RequestAttribute(ACTOR) Actor actor,@PathVariable String id) {
+        if (actor.role()!=ADMIN) actor.require(RESPONDER);
+        return store.get(Records.Control.class,"SELECT * FROM target_control WHERE target_id=?",id);
+    }
+
     @GetMapping("/management/cleanup")
     List<Cleanup> cleanup(@RequestAttribute(ACTOR) Actor actor) {
         actor.require(ADMIN);

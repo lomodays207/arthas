@@ -110,12 +110,21 @@ def snapshot(call):
     threads = {entry["name"]: entry["value"] for entry in detail["THREAD"]}
     runtime = expect_state(
         call("exec", command="dashboard -n 1", execTimeout=5000), "dashboard")
-    uptime_seconds = next(entry["runtimeInfo"]["uptime"] for entry in runtime["body"]["results"]
-                          if entry["type"] == "dashboard")
-    return {
+    dashboard = next(entry for entry in runtime["body"]["results"] if entry["type"]=="dashboard")
+    system = dashboard["runtimeInfo"]
+    result = {
         "heapUsedBytes": memory["HEAP-MEMORY-USAGE"]["used"],
         "heapCommittedBytes": memory["HEAP-MEMORY-USAGE"]["committed"],
         "nonHeapUsedBytes": memory["NO-HEAP-MEMORY-USAGE"]["used"],
         "threadCount": threads["COUNT"],
-        "uptimeMillis": int(uptime_seconds * 1000),
+        "uptimeMillis": int(system["uptime"] * 1000),
     }
+    for key,out in (("collectionCount","gcCount"),("collectionTime","gcMillis")):
+        values=[g.get(key,-1) for g in dashboard.get("gcInfos",[])]
+        if values and all(v>=0 for v in values):
+            result[out]=sum(values)
+    for key,value in (("processors",system.get("processors")),("systemLoadAverage",system.get("systemLoadAverage")),
+                      ("deadlockedThreads",threads.get("DEADLOCK-COUNT"))):
+        if isinstance(value,(int,float)) and value>=0:
+            result[key]=value
+    return result

@@ -119,6 +119,21 @@ class ApiController {
         return ResponseEntity.accepted().body(dispatch.cancel(actor, id));
     }
 
+    record Drain(@jakarta.validation.constraints.Positive long generation,
+                 @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max=100) String ticketId) {}
+    record Lease(@jakarta.validation.constraints.NotBlank String leaseToken) {}
+
+    @PostMapping("/targets/{id}/drain")
+    ResponseEntity<Void> drain(@RequestAttribute(ACTOR) AccessFilter.Actor actor,@PathVariable String id,@Valid @RequestBody Drain body) {
+        dispatch.emergency(actor,id,body.generation(),body.ticketId());
+        return ResponseEntity.accepted().build();
+    }
+
+    @PostMapping("/edge/operations/{id}/authority")
+    Deliveries.Authority authority(@RequestAttribute(ACTOR) AccessFilter.Actor actor,@PathVariable String id,@Valid @RequestBody Lease lease) {
+        return deliveries.authority(actor,id,lease.leaseToken());
+    }
+
     @PostMapping("/edge/claims")
     ResponseEntity<Delivery> claim(@RequestAttribute(ACTOR) AccessFilter.Actor actor) {
         Delivery delivery = deliveries.claim(actor);
