@@ -15,6 +15,7 @@ curl -fsS http://127.0.0.1:8080/actuator/health
 curl -fsS http://127.0.0.1:8081/actuator/health
 ```
 
+- [验证范围及试点差距](docs/verification.md)
 - [外部系统接入](docs/integrations.md)
 - [工作台、网关与主机代理部署](docs/pilot.md)
 - [平台 OpenAPI](docs/openapi.yaml)

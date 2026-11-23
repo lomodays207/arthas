@@ -43,6 +43,7 @@ class Agent:
     def __init__(self, cfg, root):
         self.cfg, self.root = cfg, root
         self.previews = {}
+        self.last_recovery = 0
         self.pid, self.jdk = int(cfg["pid"]), Path(cfg["jdk"]).resolve()
         native.require(profile(self.jdk) == cfg["runtimeProfile"], "Configured runtime profile differs")
         self.urls = [urlsplit(url) for url in cfg.get("gateways",[cfg.get("gateway","")])]
@@ -163,12 +164,31 @@ class Agent:
                 native.stop_listener(lambda action,**args:self.call(row,action,**args),self.pid,row["port"])
             elif row["state"] == "STARTING":
                 raise RuntimeError("Incomplete attach requires reconciliation")
-            self.db.execute("UPDATE instance SET state='CLOSED',password='' WHERE generation=?",(row["generation"],))
-            if offline:
-                self.db.execute("INSERT OR IGNORE INTO releases VALUES (?)",(row["generation"],))
-            self.db.commit()
-            shutil.rmtree(self.root / ("media-"+str(row["generation"])), ignore_errors=True)
+            self.record_closed(row,offline)
         return "RELEASED", None
+
+    def record_closed(self,row,offline):
+        self.db.execute("UPDATE instance SET state='CLOSED',password='' WHERE generation=?",(row["generation"],))
+        if offline:
+            self.db.execute("INSERT OR IGNORE INTO releases VALUES (?)",(row["generation"],))
+        self.db.commit()
+        shutil.rmtree(self.root / ("media-"+str(row["generation"])), ignore_errors=True)
+
+    def recover_interrupted(self):
+        # A process crash can leave a durable intent without a native completion.
+        # Reconcile by shutting down our authenticated endpoint, never by reissuing the intent.
+        for item in self.db.execute("SELECT operation FROM receipt WHERE body IS NULL").fetchall():
+            op=json.loads(item["operation"])
+            row=self.db.execute("SELECT * FROM instance WHERE generation=?",(op["generation"],)).fetchone()
+            if row is None:
+                continue
+            if row["state"]=="CLOSED":
+                self.db.execute("INSERT OR IGNORE INTO releases VALUES (?)",(row["generation"],))
+            else:
+                self.cleanup_one(row)
+            body=dict(completion="UNKNOWN",leaseToken=op["leaseToken"])
+            self.db.execute("UPDATE receipt SET body=? WHERE id=?",(json.dumps(body),op["operationId"]))
+            self.db.commit()
 
     def perform(self, op):
         if op["targetId"] != self.cfg["targetId"] or op["fingerprint"] != self.cfg["fingerprint"]:
@@ -176,6 +196,8 @@ class Agent:
         try:
             same = self.same()
         except FileNotFoundError:
+            if Path(f"/proc/{self.pid}").exists():
+                raise
             same = False
         if not same:
             return ("TARGET_GONE" if op["type"] in ("ATTACH","RELEASE","EMERGENCY_RELEASE") else "FAILED"), None
@@ -222,6 +244,12 @@ class Agent:
         return "UNKNOWN", None
 
     def tick(self):
+        if time.monotonic()-self.last_recovery>=5:
+            self.last_recovery=time.monotonic()
+            try:
+                self.recover_interrupted()
+            except (OSError,RuntimeError,http.client.HTTPException) as error:
+                print("Interrupted intent remains unconfirmed:",type(error).__name__,flush=True)
         self.previews={key:value for key,value in self.previews.items() if value[0]>time.monotonic()}
         for row in self.db.execute("SELECT * FROM receipt WHERE sent=0 ORDER BY rowid LIMIT 20").fetchall():
             op = json.loads(row["operation"])
@@ -256,11 +284,25 @@ class Agent:
         self.db.execute("UPDATE receipt SET body=? WHERE id=?",(json.dumps(body),op["operationId"]))
         self.db.commit()
 
+    def cleanup_one(self,row):
+        try:
+            same=self.same()
+        except FileNotFoundError:
+            if Path(f"/proc/{self.pid}").exists():
+                raise
+            same=False
+        if same:
+            self.release(row,offline=True)
+        else:
+            # The enrolled process has disappeared. Do not touch its replacement.
+            self.record_closed(row,True)
+
     def cleanup(self):
         for row in self.db.execute("SELECT * FROM instance WHERE state!='CLOSED'").fetchall():
-            if self.same():
-                # Queue the proof only after native cleanup, in the same database transaction.
-                self.release(row, offline=True)
+            try:
+                self.cleanup_one(row)
+            except (OSError,RuntimeError,http.client.HTTPException) as error:
+                print("Local cleanup remains unconfirmed:",type(error).__name__,flush=True)
 
     def serve(self):
         last = time.monotonic()

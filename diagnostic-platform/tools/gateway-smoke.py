@@ -99,6 +99,10 @@ def host_agent_smoke(api, gateway_port, stalled_gateway, jdk, archive, classes):
             worker = start()
             try:
                 await_condition("Agent did not attach",lambda:api.request("GET",url,200,"operator")["state"]=="ACTIVE",35)
+                # Restart hard, preserving the local journal and the already-managed listener.
+                worker.kill()
+                worker.wait(10)
+                worker=start()
                 task = api.request("POST",url+"/tasks",202,"operator",dict(capability="JVM_OVERVIEW"),"real")
                 def sampled():
                     t = api.request("GET","/api/v1/tasks/"+task["taskId"],200,"operator")

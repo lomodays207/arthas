@@ -19,7 +19,7 @@ for component in ("platform-api","gateway"):
     files["lib/"+component+".jar"] = jars[0]
 for name in ("host_agent.py","native.py","diagnostics.py","identity.py"):
     files["agent/"+name] = ROOT/"agent"/name
-for name in ("pilot.md","openapi.yaml","gateway-contract.md","integrations.md"):
+for name in ("pilot.md","openapi.yaml","gateway-contract.md","integrations.md","verification.md"):
     files["docs/"+name] = ROOT/"docs"/name
 files["tools/ticket-forwarder.py"]=ROOT/"tools"/"ticket-forwarder.py"
 launcher = """#!/bin/sh
