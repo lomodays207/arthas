@@ -70,7 +70,7 @@ def observe_and_cancel(call):
         expect_state(call("close_session", sessionId=session_id), "close_session")
 
 
-def run(jdk, archive, sha256, classes, mode, exercise=None):
+def run(jdk, archive, sha256, classes, mode, exercise=None, measure=None):
     password = secrets.token_urlsafe(32)
     encoded = base64.b64encode(f"fixture:{password}".encode()).decode()
     java = str(jdk / "bin" / "java")
@@ -92,6 +92,8 @@ def run(jdk, archive, sha256, classes, mode, exercise=None):
         )
         output = root / "fixture.log"
         options = [f"-Duser.home={root}", "-Djava.net.preferIPv4Stack=true"]
+        if measure:
+            options.append("-Ddiagnostic.fixture.measure=true")
         if mode == "startup":
             options.append(f"-javaagent:{arthas / 'arthas-agent.jar'}")
         with output.open("w") as stream, subprocess.Popen(
@@ -138,7 +140,9 @@ def run(jdk, archive, sha256, classes, mode, exercise=None):
                     stop_fixture_arthas(call, pid, port)
 
                 try:
-                    if exercise is None:
+                    if measure:
+                        message = measure(call, pid, output)
+                    elif exercise is None:
                         version = observe_and_cancel(call)
                         message = f"Arthas {version}, local auth, JVM snapshot, watch intercept/cancel"
                     else:

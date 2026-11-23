@@ -54,3 +54,15 @@ python3 agent/host_agent.py --discover /opt/target-jdk
 ## 发布及回退
 
 在 Maven 构建通过后运行 `python3 tools/package-pilot.py --out target/diagnostic-pilot.zip`。解压到独立版本目录，执行 `sha256sum -c SHA256SUMS`，通过 `sh run.sh platform`、`sh run.sh gateway`、`sh run.sh agent --config /opt/diag/agent.json` 分别启动。服务管理器负责传入各自身份及环境变量，并配置重启。数据目录、数据库连接配置和代理日志目录应位于版本目录之外。升级前暂停新增任务，等待接入回收、备份数据库与代理状态。回退到兼容旧版本；存在不兼容数据库变更时，先在隔离环境验证备份恢复，避免覆盖新写入的数据。
+
+## 共享采样和故障演练
+
+对已授权会话调用 `POST /api/v1/sessions/{id}/overview` 会合并同一 JVM、同一代次正在执行的快照，并可复用五秒内收到的结果。调用 `GET /api/v1/sessions/{id}/overview` 只读取状态。响应包含 generation、receivedAt、stale 和 pending。任务 SSE 接口 `GET /api/v1/tasks/{id}/events` 支持 Last-Event-ID 重连，从数据库恢复后续状态，每批复核授权。最终的结果仍通过任务查询获取。
+
+在网关端到端测试中增加 `--network-loss` 会实际暂停网关进程，检查代理在本地超时后关闭样例 JVM 监听器，并在网关恢复后提交回收证据。持续任务的采集窗口受硬期限限制。部分 Java 8 Trace 事件仅返回线程根节点，工作台将这样的结果标为部分结果。
+
+## 合成性能与现场留存验证
+
+`tools/fixture-performance.py` 对同一合成 JVM 先运行空闲诊断基线，再开启周期快照。每阶段报告单核 CPU 使用率、业务批次 P95 中的最大值、交易次数和采样耗时。参数为 `--jdk --archive --classes --seconds`，默认动态附着，每阶段默认 20 秒。基线包含已加载的 Arthas。这个试验不能给出真实业务准入结论。
+
+`tools/fixture-experiments.py` 在脚本新建的合成 JVM 中执行两秒 wall 剖析、一次调用现场留存，校验生成物非空，并核对产物和留存条目已经删除。接口层没有暴露留存对象、产物文件和重放入口。使用与性能脚本相同的 JDK、介质及样例目录参数。

@@ -135,6 +135,12 @@ async function monitor(id) {
     const fresh = await api('/sessions/'+path(id)+'/heartbeat','POST');
     if (session?.sessionId !== id) return;
     session = fresh; el('sessionState').textContent = session.targetId+' · '+session.state;
+    if (!el('shared').hidden && session.state === 'ACTIVE') {
+      const overview = await api(sessionUrl()+'/overview');
+      if (overview.result) el('overview').textContent =
+        (overview.stale?'上次快照':'共享快照')+' · '+new Date(overview.receivedAt).toLocaleTimeString()+' · '+
+        '堆内存 '+Math.round(overview.result.heapUsedBytes/1048576)+' MiB · '+overview.result.threadCount+' 个线程';
+    }
     if (task && !terminal(task.state)) renderTask(await api('/tasks/'+path(task.taskId)));
   } catch (e) { el('message').textContent = e.message; }
   if (session?.sessionId === id) timer = setTimeout(() => monitor(id), 3000);
@@ -145,6 +151,7 @@ action('open', async () => {
   if (!g || g.state !== 'GRANTED') throw Error('请选择已批准的授权');
   session = await api('/sessions','POST',{targetId:g.targetId,grantId:g.grantId});
   options('capability',capOptions(g.capabilities.split(',')),'key',x=>x.label); fields();
+  show('shared',g.capabilities.split(',').includes('JVM_OVERVIEW')); el('overview').textContent='';
   show('workspace',true); await monitor(session.sessionId);
 });
 async function follow(id) {
@@ -240,3 +247,5 @@ action('revokeRef',async()=>{
   await api('/references/'+path(el('refId').value.trim()),'DELETE');
   el('referenceData').textContent = ''; record('证据引用已撤销');
 });
+
+action('shared',async()=>{ const v=await api(sessionUrl()+'/overview','POST'); record(v.pending?'共享快照采集中':'已复用最近五秒的快照'); });

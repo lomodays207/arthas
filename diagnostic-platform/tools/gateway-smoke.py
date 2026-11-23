@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import runpy
 import secrets
+import signal
 import socket
 import ssl
 import subprocess
@@ -56,7 +57,7 @@ def server(java, jar, listen, env, *args):
                     time.sleep(.1)
             else:
                 raise RuntimeError("startup timeout")
-            yield
+            yield proc
         finally:
             proc.terminate()
             try:
@@ -66,7 +67,7 @@ def server(java, jar, listen, env, *args):
                 proc.wait()
 
 
-def host_agent_smoke(api, gateway_port, jdk, archive, classes):
+def host_agent_smoke(api, gateway_port, stalled_gateway, jdk, archive, classes):
     agent_script = Path(__file__).resolve().parents[1] / "agent" / "host_agent.py"
     sys.path.insert(0, str(agent_script.parent))
     from host_agent import fingerprint
@@ -105,12 +106,23 @@ def host_agent_smoke(api, gateway_port, jdk, archive, classes):
                 with sqlite3.connect("agent-state/journal.db") as journal:
                     native_port = journal.execute("SELECT port FROM instance").fetchone()[0]
                 assert owned_listener(fixture.pid,native_port)
-                worker.terminate()
-                worker.wait(20)
-                assert fixture.poll() is None and not owned_listener(fixture.pid,native_port)
-                worker = start()
-                await_condition("Release proof missing after restart",
-                                lambda:api.request("GET",url,200,"operator")["state"]=="CLOSED")
+                if stalled_gateway:
+                    stalled_gateway.send_signal(signal.SIGSTOP)
+                    try:
+                        await_condition("Agent did not reap offline listener",
+                                        lambda:not owned_listener(fixture.pid,native_port),65)
+                    finally:
+                        stalled_gateway.send_signal(signal.SIGCONT)
+                else:
+                    worker.terminate()
+                    worker.wait(20)
+                    worker = start()
+                assert fixture.poll() is None
+                def reconciled():
+                    audit=api.request("GET","/api/v1/audit/events?targetId=real",200,"admin")
+                    return any(e["action"]=="AGENT_RELEASE_CONFIRMED" for e in audit)
+                await_condition("Release proof missing after reconnection",reconciled,20)
+                assert not owned_listener(fixture.pid,native_port)
                 print("PASS host agent: native attach, structured snapshot, local cleanup, restart reconciliation")
             finally:
                 worker.terminate()
@@ -120,7 +132,7 @@ def host_agent_smoke(api, gateway_port, jdk, archive, classes):
             fixture.wait(8)
 
 
-def exercise(java, platform, gateway, host_args):
+def exercise(java, platform, gateway, host_args, network_loss):
     tokens = {k:secrets.token_urlsafe(36) for k in ["admin","operator","approver","a","b"]}
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days","1","-subj","/CN=smoke-ca",
         "-addext","basicConstraints=critical,CA:TRUE","-keyout","ca.key","-out","ca.pem")
@@ -147,7 +159,7 @@ def exercise(java, platform, gateway, host_args):
     with server(java, platform, api_port, env), server(java, gateway, edge_port, edge_env,
             "--diagnostic.platform-port="+str(api_port), "--server.ssl.enabled=true",
             "--server.ssl.certificate=server.pem","--server.ssl.certificate-private-key=server.key",
-            "--server.ssl.trust-certificate=ca.pem"):
+            "--server.ssl.trust-certificate=ca.pem") as edge_process:
         api = PLATFORM(api_port, tokens)
         assert api.request("GET","/api/v1/me",200,"operator")["role"] == "OPERATOR"
         api.request("GET","/api/v1/grants",401)
@@ -181,7 +193,7 @@ def exercise(java, platform, gateway, host_args):
         assert edge("a",release)[0] == 204
         assert edge("a",release)[0] == 204
         if host_args:
-            host_agent_smoke(api,edge_port,*host_args)
+            host_agent_smoke(api,edge_port,edge_process if network_loss else None,*host_args)
         print("PASS two-agent mTLS, authenticated claim, cross-agent rejection and replay")
 
 
@@ -191,6 +203,7 @@ if __name__ == "__main__":
         parser.add_argument("--"+name, required=True, type=Path)
     for name in ["jdk","archive","classes"]:
         parser.add_argument("--"+name,type=Path)
+    parser.add_argument("--network-loss",action="store_true")
     args = parser.parse_args()
     host_args = [v.resolve() for v in [args.jdk,args.archive,args.classes] if v]
     if len(host_args) not in (0,3):
@@ -198,4 +211,4 @@ if __name__ == "__main__":
     paths = [v.resolve() for v in [args.java,args.platform,args.gateway]]
     with tempfile.TemporaryDirectory() as tmp:
         os.chdir(tmp)
-        exercise(*paths,host_args)
+        exercise(*paths,host_args,args.network_loss)

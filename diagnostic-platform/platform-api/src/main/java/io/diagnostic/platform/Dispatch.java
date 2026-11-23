@@ -137,6 +137,37 @@ class Dispatch {
         return view(task(id));
     }
 
+    record Overview(long generation,Long receivedAt,boolean stale,boolean pending,Snapshot result) {}
+    record Cached(String resultJson,long receivedAt) {}
+
+    @Transactional
+    public Overview overview(AccessFilter.Actor actor,String id,boolean refresh) {
+        Session initial=ownedSession(actor,id);
+        Control control=lock(initial.targetId());
+        Session session=ownedSession(actor,id);
+        requireActiveOrOpening(session);
+        var grant=requireGrant(actor.id(),session.targetId(),session.grantId());
+        if (!List.of(grant.capabilities().split(",")).contains(Capability.JVM_OVERVIEW.name())) throw ApiError.forbidden();
+        if (!session.state().equals("ACTIVE") || session.generation()!=control.generation()) throw ApiError.conflict("SESSION_NOT_READY");
+        var cached=store.find(Cached.class,"""
+                SELECT t.result_json,e.occurred_at received_at FROM diagnosis_task t
+                JOIN task_event e ON t.task_id=e.task_id AND e.state='SUCCEEDED'
+                WHERE t.target_id=? AND t.generation=? AND t.capability='JVM_OVERVIEW' AND t.state='SUCCEEDED'
+                ORDER BY e.occurred_at DESC,t.task_id DESC LIMIT 1
+                """,session.targetId(),control.generation());
+        boolean stale=cached.isEmpty() || cached.get().receivedAt()+5000 <= store.now();
+        boolean pending=control.activeTaskId()!=null && task(control.activeTaskId()).capability()==Capability.JVM_OVERVIEW;
+        if (refresh && stale && !pending) {
+            submit(actor,id,Store.id(),new TaskInput(Capability.JVM_OVERVIEW,null));
+            pending=true;
+        }
+        if (cached.isEmpty()) return new Overview(control.generation(),null,true,pending,null);
+        try {
+            var value=cached.get();
+            return new Overview(control.generation(),value.receivedAt(),stale,pending,json.readValue(value.resultJson(),Snapshot.class));
+        } catch (JsonProcessingException e) { throw new IllegalStateException(e); }
+    }
+
     private Operations.Policy policy(String target) {
         var policy = store.get(Operations.Policy.class, """
                 SELECT p.* FROM asset_policy p JOIN jvm_target t ON p.asset_id=t.asset_id WHERE t.target_id=? FOR UPDATE

@@ -153,6 +153,17 @@ paths:
       operationId: renewSession
       responses:
         '200': {description: Session extended within grant expiry}
+  /api/v1/sessions/{id}/overview:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: readSharedOverview
+      responses:
+        '200': {description: Last snapshot in this generation with freshness and pending flags}
+    post:
+      operationId: refreshSharedOverview
+      responses:
+        '200': {description: Join pending collection or reuse a fresh sample}
   /api/v1/sessions/{id}/tasks:
     parameters:
       - $ref: '#/components/parameters/Id'

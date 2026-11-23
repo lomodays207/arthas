@@ -1,6 +1,7 @@
 package io.diagnostic.fixture;
 
 import java.io.InputStream;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 
 public final class DiagnosticFixture {
@@ -14,23 +15,38 @@ public final class DiagnosticFixture {
         workload.handleRequest(false);
         Object isolated = new WorkloadLoader().loadClass(WORKLOAD_CLASS)
                 .getDeclaredConstructor().newInstance();
-        startLoad(workload);
+        startLoad(workload,Boolean.getBoolean("diagnostic.fixture.measure"));
         startBlockedThread();
         System.out.println("FIXTURE_READY");
         new CountDownLatch(1).await();
         System.out.println(isolated);
     }
 
-    private static void startLoad(Workload workload) {
+    private static void startLoad(Workload workload, boolean measure) {
         Thread load = new Thread(() -> {
             boolean shouldFail = false;
+            long[] samples = new long[16];
+            int count = 0;
+            int errors = 0;
             try {
                 while (!Thread.currentThread().isInterrupted()) {
+                    long start = System.nanoTime();
                     try {
                         workload.handleRequest(shouldFail);
                     } catch (IllegalStateException expected) {
+                        errors++;
                         if (!shouldFail) {
                             throw expected;
+                        }
+                    }
+                    if (measure) {
+                        samples[count++] = System.nanoTime() - start;
+                        if (count == samples.length) {
+                            Arrays.sort(samples);
+                            System.out.println("FIXTURE_WINDOW " + System.currentTimeMillis() + " " + count + " "
+                                    + errors + " " + samples[(int) Math.ceil(.95 * count) - 1]);
+                            count = 0;
+                            errors = 0;
                         }
                     }
                     shouldFail = !shouldFail;

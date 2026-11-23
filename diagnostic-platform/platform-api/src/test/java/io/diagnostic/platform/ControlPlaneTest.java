@@ -118,6 +118,23 @@ class ControlPlaneTest {
     }
 
     @Test
+    void sharesSnapshotOnlyWithinGenerationAndAuthorizedSession() throws Exception {
+        String first=open(approvedGrant("operator"),"operator","OPENING");
+        String second=open(approvedGrant("operator2"),"operator2","OPENING");
+        complete(claim("ATTACH"),"ATTACHED",null);
+        for (String[] viewer:new String[][]{{first,"operator"},{second,"operator2"}})
+            write(post("/api/v1/sessions/"+viewer[0]+"/overview"),viewer[1],null)
+                    .andExpect(jsonPath("$.pending").value(true));
+        complete(claim("SNAPSHOT"),"DONE",snapshotResult());
+        write(post("/api/v1/sessions/"+second+"/overview"),"operator2",null)
+                .andExpect(jsonPath("$.result.threadCount").value(3)).andExpect(jsonPath("$.pending").value(false));
+        noClaim();
+        read(get("/api/v1/sessions/"+first+"/overview"),"operator2").andExpect(status().isForbidden());
+        clock.advance(6000);
+        read(get("/api/v1/sessions/"+second+"/overview"),"operator2").andExpect(jsonPath("$.stale").value(true));
+    }
+
+    @Test
     void managesAdmissionAndScopedEvidence() throws Exception {
         String grant=approvedGrant("operator");
         write(put("/api/v1/assets/asset/policy"),"admin",Map.of("expectedRevision",1,"paused",true,"maxSessions",1))

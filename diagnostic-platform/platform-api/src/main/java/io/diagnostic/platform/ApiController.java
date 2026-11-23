@@ -92,6 +92,16 @@ class ApiController {
         return dispatch.close(actor, id);
     }
 
+    @GetMapping("/sessions/{id}/overview")
+    Dispatch.Overview overview(@RequestAttribute(ACTOR) AccessFilter.Actor actor,@PathVariable String id) {
+        return dispatch.overview(actor,id,false);
+    }
+
+    @PostMapping("/sessions/{id}/overview")
+    Dispatch.Overview sampleOverview(@RequestAttribute(ACTOR) AccessFilter.Actor actor,@PathVariable String id) {
+        return dispatch.overview(actor,id,true);
+    }
+
     @PostMapping("/sessions/{id}/tasks")
     ResponseEntity<TaskView> submit(@RequestAttribute(ACTOR) AccessFilter.Actor actor, @PathVariable String id,
                                     @RequestHeader(value = "Idempotency-Key", required = false) String key,

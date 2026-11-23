@@ -54,7 +54,9 @@ jobs:
 
           python3 tools/diagnostics-smoke.py --jdk "$JAVA_HOME" --archive "$archive" --classes fixtures/target/classes
 
-          python3 tools/gateway-smoke.py --java "$PLATFORM_JAVA" \
+          gateway_args=()
+          if [ "$TARGET_FEATURE" = "17" ]; then gateway_args+=(--network-loss); fi
+          python3 tools/gateway-smoke.py "${gateway_args[@]}" --java "$PLATFORM_JAVA" \
             --platform platform-api/target/platform-api-0.1.0-SNAPSHOT.jar \
             --gateway gateway/target/gateway-0.1.0-SNAPSHOT.jar \
             --jdk "$JAVA_HOME" --archive "$archive" --classes fixtures/target/classes
