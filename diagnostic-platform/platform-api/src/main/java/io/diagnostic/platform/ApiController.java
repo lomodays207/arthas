@@ -22,6 +22,16 @@ class ApiController {
         this.deliveries = deliveries;
     }
 
+    @GetMapping("/me")
+    AccessFilter.Actor identity(@RequestAttribute(ACTOR) AccessFilter.Actor actor) {
+        return actor;
+    }
+
+    @GetMapping("/grants")
+    List<Grant> grants(@RequestAttribute(ACTOR) AccessFilter.Actor actor) {
+        return registry.grants(actor);
+    }
+
     @PostMapping("/assets")
     ResponseEntity<Asset> registerAsset(@RequestAttribute(ACTOR) AccessFilter.Actor actor,
                                         @Valid @RequestBody AssetInput input) {
@@ -109,6 +119,13 @@ class ApiController {
     ResponseEntity<Void> complete(@RequestAttribute(ACTOR) AccessFilter.Actor actor, @PathVariable String id,
                                    @Valid @RequestBody CompletionInput input) {
         deliveries.complete(actor, id, input);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/edge/targets/{id}/generations/{generation}/released")
+    ResponseEntity<Void> released(@RequestAttribute(ACTOR) AccessFilter.Actor actor,
+                                  @PathVariable String id, @PathVariable long generation) {
+        deliveries.reportRelease(actor, id, generation);
         return ResponseEntity.noContent().build();
     }
 

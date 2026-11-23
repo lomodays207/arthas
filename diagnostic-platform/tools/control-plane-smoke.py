@@ -60,22 +60,7 @@ class Platform:
                      204, "executor", body)
 
 
-def snapshot(call):
-    jvm = SMOKE["expect_state"](call("exec", command="jvm", execTimeout=5000), "jvm")
-    detail = next(entry["jvmInfo"] for entry in jvm["body"]["results"] if entry["type"] == "jvm")
-    memory = {entry["name"]: entry["value"] for entry in detail["MEMORY"]}
-    threads = {entry["name"]: entry["value"] for entry in detail["THREAD"]}
-    runtime = SMOKE["expect_state"](
-        call("exec", command="dashboard -n 1", execTimeout=5000), "dashboard")
-    uptime_seconds = next(entry["runtimeInfo"]["uptime"] for entry in runtime["body"]["results"]
-                          if entry["type"] == "dashboard")
-    return {
-        "heapUsedBytes": memory["HEAP-MEMORY-USAGE"]["used"],
-        "heapCommittedBytes": memory["HEAP-MEMORY-USAGE"]["committed"],
-        "nonHeapUsedBytes": memory["NO-HEAP-MEMORY-USAGE"]["used"],
-        "threadCount": threads["COUNT"],
-        "uptimeMillis": int(uptime_seconds * 1000),
-    }
+from native import snapshot
 
 
 def exercise(platform, feature, call, release, fingerprint):

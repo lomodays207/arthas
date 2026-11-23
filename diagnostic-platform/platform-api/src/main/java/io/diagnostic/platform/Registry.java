@@ -96,6 +96,14 @@ class Registry {
         return grant(id);
     }
 
+    public List<Grant> grants(AccessFilter.Actor actor) {
+        if (actor.role() == APPROVER) {
+            return store.list(Grant.class, "SELECT * FROM diagnosis_grant ORDER BY expires_at DESC, grant_id LIMIT 200");
+        }
+        actor.require(OPERATOR);
+        return store.list(Grant.class, "SELECT * FROM diagnosis_grant WHERE requester_id = ? ORDER BY expires_at DESC, grant_id LIMIT 200", actor.id());
+    }
+
     public Grant getGrant(AccessFilter.Actor actor, String grantId) {
         Grant grant = grant(grantId);
         if (actor.role() != APPROVER && !grant.requesterId().equals(actor.id())) {

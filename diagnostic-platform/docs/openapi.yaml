@@ -6,6 +6,11 @@ info:
 security:
   - bearerToken: []
 paths:
+  /api/v1/me:
+    get:
+      operationId: getPrincipal
+      responses:
+        '200': {description: Authenticated identity and role}
   /api/v1/assets:
     get:
       operationId: listVisibleAssets
@@ -55,6 +60,10 @@ paths:
       responses:
         '201': {description: Target registered}
   /api/v1/grants:
+    get:
+      operationId: listGrants
+      responses:
+        '200': {description: Latest 200 visible grants ordered by expiry}
     post:
       operationId: requestGrant
       requestBody:
@@ -226,6 +235,14 @@ paths:
           schema: {type: string}
       responses:
         '200': {description: Audit events for the target}
+  /api/v1/edge/targets/{id}/generations/{generation}/released:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+      - {name: generation, in: path, required: true, schema: {type: integer}}
+    post:
+      operationId: confirmLocalRelease
+      responses:
+        '204': {description: Generation reconciled or already superseded}
 components:
   parameters:
     Id:

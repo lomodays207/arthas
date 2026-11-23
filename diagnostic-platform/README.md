@@ -1,6 +1,6 @@
 # Arthas 在线诊断平台
 
-当前版本包含 Java 17 平台 API、网关工程、Java 8 兼容的诊断样例和自动化验收。平台已实现资产登记、授权审批、诊断会话、`JVM_OVERVIEW` 任务、持久队列与审计。网关当前提供健康检查。合成应用联调通过受限执行端接口驱动，正式主机代理、网关 mTLS 接入、动态方法任务和诊断工作台在后续实现。
+当前版本包含 Java 17 平台 API、网关工程、Java 8 兼容的诊断样例和自动化验收。平台已实现资产登记、授权审批、诊断会话、`JVM_OVERVIEW` 任务、持久队列与审计。网关通过双向 TLS 接收主机代理出站请求。平台提供中文操作工作台。主机代理可针对单个已登记的 Linux JVM 采集快照。
 
 ## 构建与健康检查
 
@@ -15,6 +15,7 @@ curl -fsS http://127.0.0.1:8080/actuator/health
 curl -fsS http://127.0.0.1:8081/actuator/health
 ```
 
+- [工作台、网关与主机代理部署](docs/pilot.md)
 - [平台 OpenAPI](docs/openapi.yaml)
 - [执行端接口与网关协议](docs/gateway-contract.md)
 

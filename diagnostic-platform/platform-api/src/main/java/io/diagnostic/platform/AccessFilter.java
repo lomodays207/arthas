@@ -38,12 +38,23 @@ final class AccessFilter extends OncePerRequestFilter {
             @Value("${diagnostic.auth.operator-token}") String operator,
             @Value("${diagnostic.auth.operator2-token:}") String operator2,
             @Value("${diagnostic.auth.executor-token}") String executor,
-            @Value("${diagnostic.auth.executor-id}") String executorId) {
+            @Value("${diagnostic.auth.executor-id}") String executorId,
+            @Value("${DIAGNOSTIC_AGENT_TOKENS:}") String agentTokens) {
         register(admin, new Actor("admin", Role.ADMIN));
         register(approver, new Actor("approver", Role.APPROVER));
         register(operator, new Actor("operator", Role.OPERATOR));
         register(operator2, new Actor("operator2", Role.OPERATOR));
         register(executor, new Actor(executorId, Role.EXECUTOR));
+        if (!agentTokens.isBlank()) {
+            for (String entry : agentTokens.split(",", -1)) {
+                String[] pair = entry.split("=", 2);
+                if (pair.length != 2 || !pair[0].matches(Records.KEY) || pair[1].isEmpty()
+                        || credentials.stream().anyMatch(c -> c.actor().id().equals(pair[0]))) {
+                    throw new IllegalArgumentException("Invalid or duplicated agent binding");
+                }
+                register(pair[1], new Actor(pair[0], Role.EXECUTOR));
+            }
+        }
     }
 
     private void register(String token, Actor actor) {
@@ -62,7 +73,9 @@ final class AccessFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().equals(request.getContextPath() + "/actuator/health");
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        return request.getMethod().equals("GET") && List.of("/actuator/health", "/console.html",
+                "/console.js", "/console.css").contains(path);
     }
 
     @Override

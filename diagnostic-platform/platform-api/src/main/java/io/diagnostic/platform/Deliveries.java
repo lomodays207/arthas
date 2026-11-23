@@ -144,6 +144,37 @@ class Deliveries {
         dispatch.scheduleReleaseIfIdle(control.targetId());
     }
 
+    @Transactional
+    public void reportRelease(AccessFilter.Actor actor, String target, long generation) {
+        actor.require(EXECUTOR);
+        Control control = dispatch.lock(target);
+        int owned = store.count("""
+                SELECT COUNT(*) FROM jvm_target t JOIN asset_instance a ON a.asset_id=t.asset_id
+                WHERE t.target_id=? AND a.agent_id=?
+                """, target, actor.id());
+        if (owned != 1) throw ApiError.forbidden();
+        if (generation < 1 || generation > control.generation()) throw ApiError.conflict("INVALID_GENERATION");
+        if (generation < control.generation() || control.attachState().equals("RELEASED")) return;
+        if (control.activeTaskId() != null) {
+            Task task = dispatch.task(control.activeTaskId());
+            if (task.state() == TaskState.QUEUED || task.state() == TaskState.CANCEL_REQUESTED) {
+                dispatch.finish(task, TaskState.CANCELLED, null);
+            } else {
+                dispatch.finish(task, TaskState.FAILED, null);
+            }
+        }
+        store.write("""
+                UPDATE operation_outbox SET state='SUPERSEDED' WHERE target_id=? AND generation=?
+                AND state IN ('PENDING','CLAIMED','UNCERTAIN')
+                """, target, generation);
+        store.write("""
+                UPDATE diagnosis_session SET state='CLOSED' WHERE target_id=? AND generation=?
+                AND state IN ('OPENING','ACTIVE')
+                """, target, generation);
+        dispatch.setAttachState(target, generation, "RELEASED");
+        store.audit(actor.id(), "AGENT_RELEASE_CONFIRMED", target, null, null, "LOCAL_CLEANUP");
+    }
+
     private void completeAttach(Control control, Completion completion) {
         String next;
         String sessionState;
