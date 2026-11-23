@@ -31,6 +31,7 @@ class Registry {
                 VALUES (?, ?, ?, ?, ?, ?)
                 """, input.assetId(), input.appId(), input.environmentName(), input.zoneId(),
                 input.agentId(), input.displayName());
+        store.write("INSERT INTO asset_policy (asset_id,paused,max_sessions,revision) VALUES (?,FALSE,16,1)", input.assetId());
         input.members().stream().distinct().forEach(member -> store.write(
                 "INSERT INTO asset_member (asset_id, actor_id) VALUES (?, ?)", input.assetId(), member));
         store.audit(actor.id(), "ASSET_REGISTERED", null, null, null, input.assetId());

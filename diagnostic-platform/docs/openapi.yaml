@@ -256,6 +256,69 @@ paths:
       operationId: confirmLocalRelease
       responses:
         '204': {description: Generation reconciled or already superseded}
+  /api/v1/management/channels:
+    get:
+      operationId: listAgentChannels
+      responses:
+        '200': {description: Agent identity, last poll and online status}
+  /api/v1/management/cleanup:
+    get:
+      operationId: listCleanupAlerts
+      responses:
+        '200': {description: Targets draining or awaiting reconciliation}
+  /api/v1/assets/{id}/policy:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: readAssetPolicy
+      responses:
+        '200': {description: Current policy and revision}
+    put:
+      operationId: updateAssetPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, paused, maxSessions]
+              properties:
+                expectedRevision: {type: integer}
+                paused: {type: boolean}
+                maxSessions: {type: integer, minimum: 1, maximum: 128}
+      responses:
+        '200': {description: Updated policy}
+        '409': {description: Policy revision changed}
+  /api/v1/tasks/{id}/references:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: shareEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [readerId,expiresAt]
+              properties:
+                readerId: {type: string}
+                expiresAt: {type: integer}
+      responses:
+        '200': {description: Reference granted to selected identity}
+  /api/v1/references/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: readEvidence
+      responses:
+        '200': {description: Authorized result}
+        '403': {description: No effective permission}
+    delete:
+      operationId: revokeEvidence
+      responses:
+        '200': {description: Reference revoked}
+
 components:
   parameters:
     Id:

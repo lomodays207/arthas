@@ -1,6 +1,6 @@
 from pathlib import Path
 import tempfile,runpy,os,secrets,argparse,shutil
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 parser=argparse.ArgumentParser()
 parser.add_argument("--java",type=Path,required=True)
 parser.add_argument("--platform",type=Path,required=True)
@@ -21,13 +21,13 @@ with tempfile.TemporaryDirectory() as d:
    p=b.new_page();p.goto(f'http://127.0.0.1:{port}/console.html');p.locator('#token').fill(roles[role]);p.locator('#login button').click();p.locator('#history').wait_for();return p
   p=login('operator');p.locator('#ticket').fill('ticket');p.locator('#requested').select_option(['JVM_OVERVIEW','THREAD_LIST']);p.locator('#apply').click();p.get_by_text('已提交授权申请',exact=False).wait_for()
   a=login('approver');a.locator('#approve').click();a.get_by_text('ticket · APPROVE',exact=False).wait_for()
-  p.locator('#refresh').click();p.wait_for_function("document.querySelector('#grant').selectedOptions[0].text.includes('GRANTED')")
+  p.locator('#refresh').click();expect(p.locator("#grant option:checked")).to_contain_text("GRANTED")
   p.locator('#open').click();p.locator('#workspace').wait_for()
-  op=api.claim('ATTACH','target','test');api.complete(op,'ATTACHED');p.wait_for_function("document.querySelector('#sessionState').textContent.includes('ACTIVE')")
+  op=api.claim('ATTACH','target','test');api.complete(op,'ATTACHED');expect(p.locator("#sessionState")).to_contain_text("ACTIVE",timeout=12000)
   p.locator('#capability').select_option('THREAD_LIST');p.locator('#sample').click()
   p.get_by_text('QUEUED',exact=False).first.wait_for()
   op=api.claim('SNAPSHOT','target','test')
   api.request('POST','/api/v1/edge/operations/'+op['operationId']+'/complete',204,'executor',dict(leaseToken=op['leaseToken'],completion='DONE',evidence=dict(coverage='COMPLETE',sampledAt=123,rows=[dict(threadId=11,cpuPercent=2.5,state='RUNNABLE')])))
   p.locator('td',has_text='RUNNABLE').wait_for()
-  p.locator('#close').click();p.wait_for_function("document.querySelector('#workspace').hidden");b.close()
+  p.locator('#close').click();expect(p.locator("#workspace")).to_be_hidden();b.close()
   print('PASS browser login, multi-capability request/approval, session, typed thread result and close')

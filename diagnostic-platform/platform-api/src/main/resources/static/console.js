@@ -61,7 +61,15 @@ action('login', async () => {
   if (!['ADMIN','OPERATOR','APPROVER'].includes(me.role)) throw Error('此身份无法进入工作台');
   const assets = await api('/assets');
   options('asset', assets, 'assetId', a => a.displayName + ' · ' + a.environmentName);
+  const params = new URLSearchParams(location.search);
+  const assetId = params.get('asset');
+  if (assets.some(a=>a.assetId === assetId)) el('asset').value = assetId;
   await targets();
+  if (assetId === el('asset').value && [...el('target').options].some(t=>t.value === params.get('target'))) {
+    el('target').value = params.get('target');
+  }
+  el('ticket').value = (params.get('ticket') || '').slice(0,100);
+  show('management',me.role === 'ADMIN'); show('sharing',me.role === 'OPERATOR');
   if (me.role !== 'ADMIN') await refresh();
   el('token').value = '';
   for (const id of ['assets','logout','history']) show(id, true);
@@ -199,4 +207,36 @@ action('close', async () => {
 action('logout', async () => {
   try { if (session) await api(sessionUrl(),'DELETE'); }
   finally { ++epoch; token = ''; clearTimeout(timer); location.reload(); }
+});
+
+let policy;
+function management(value) { el('managementData').textContent = JSON.stringify(value,null,2); }
+action('channels',async()=>management(await api('/management/channels')));
+action('cleanup',async()=>management(await api('/management/cleanup')));
+action('getPolicy',async()=>{
+  policy = await api('/assets/'+path(el('asset').value)+'/policy');
+  el('quota').value = policy.maxSessions; el('pause').checked = policy.paused;
+  management(policy);
+});
+action('setPolicy',async()=>{
+  if (!policy || policy.assetId !== el('asset').value) throw Error('请先读取当前实例策略');
+  policy = await api('/assets/'+path(policy.assetId)+'/policy','PUT',{expectedRevision:policy.revision,
+    paused:el('pause').checked,maxSessions:Number(el('quota').value)});
+  management(policy);
+});
+action('share',async()=>{
+  if (!task || task.state !== 'SUCCEEDED') throw Error('请先完成诊断');
+  const g = await api('/grants/'+path(session.grantId));
+  const ref = await api('/tasks/'+path(task.taskId)+'/references','POST',{readerId:el('readerId').value.trim(),
+    expiresAt:Math.min(Date.now()+600000,g.expiresAt)});
+  el('refId').value = ref.referenceId; record('已创建证据引用');
+});
+action('readRef',async()=>{
+  el('referenceData').textContent = '';
+  const t = await api('/references/'+path(el('refId').value.trim()));
+  el('referenceData').textContent = JSON.stringify(t.result || t.evidence,null,2);
+});
+action('revokeRef',async()=>{
+  await api('/references/'+path(el('refId').value.trim()),'DELETE');
+  el('referenceData').textContent = ''; record('证据引用已撤销');
 });

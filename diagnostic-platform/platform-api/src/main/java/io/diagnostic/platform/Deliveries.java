@@ -31,6 +31,11 @@ class Deliveries {
     @Transactional
     public Delivery claim(AccessFilter.Actor actor) {
         actor.require(EXECUTOR);
+        long seen = store.now();
+        store.write("""
+                INSERT INTO agent_channel (agent_id,last_seen) VALUES (?,?)
+                ON DUPLICATE KEY UPDATE last_seen=GREATEST(last_seen,?)
+                """,actor.id(),seen,seen);
         for (Operation candidate : store.list(Operation.class, """
                 SELECT o.* FROM operation_outbox o WHERE o.agent_id = ? AND o.state = 'PENDING'
                 AND o.available_at <= ?

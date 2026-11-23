@@ -41,6 +41,8 @@ class Dispatch {
         if (!List.of("RELEASED", "ATTACHING", "READY").contains(control.attachState())) {
             throw ApiError.conflict("ATTACHMENT_UNAVAILABLE");
         }
+        Operations.Policy policy = policy(input.targetId());
+        if (liveSessions(control) >= policy.maxSessions()) throw ApiError.conflict("SESSION_QUOTA");
         long generation = control.generation();
         if (control.attachState().equals("RELEASED")) {
             generation++;
@@ -116,6 +118,7 @@ class Dispatch {
                 || current.generation() != control.generation()) {
             throw ApiError.conflict("SESSION_NOT_READY");
         }
+        policy(control.targetId());
         if (control.activeTaskId() != null) {
             throw ApiError.conflict("TARGET_BUSY");
         }
@@ -132,6 +135,14 @@ class Dispatch {
         enqueue(current.targetId(), current.generation(), OperationType.SNAPSHOT, id, store.now());
         store.audit(actor.id(), "TASK_QUEUED", current.targetId(), current.grantId(), id, null);
         return view(task(id));
+    }
+
+    private Operations.Policy policy(String target) {
+        var policy = store.get(Operations.Policy.class, """
+                SELECT p.* FROM asset_policy p JOIN jvm_target t ON p.asset_id=t.asset_id WHERE t.target_id=? FOR UPDATE
+                """,target);
+        if (policy.paused()) throw ApiError.conflict("ASSET_PAUSED");
+        return policy;
     }
 
     public TaskView lookupTask(AccessFilter.Actor actor, String id) {
@@ -405,7 +416,7 @@ class Dispatch {
         catch (JsonProcessingException e) { throw new IllegalStateException(e); }
     }
 
-    private TaskView view(Task task) {
+    TaskView view(Task task) {
         try {
             boolean overview = task.capability() == Capability.JVM_OVERVIEW;
             Snapshot result = overview && task.resultJson() != null ? json.readValue(task.resultJson(), Snapshot.class) : null;

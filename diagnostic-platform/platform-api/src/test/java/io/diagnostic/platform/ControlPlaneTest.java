@@ -118,6 +118,30 @@ class ControlPlaneTest {
     }
 
     @Test
+    void managesAdmissionAndScopedEvidence() throws Exception {
+        String grant=approvedGrant("operator");
+        write(put("/api/v1/assets/asset/policy"),"admin",Map.of("expectedRevision",1,"paused",true,"maxSessions",1))
+                .andExpect(status().isOk());
+        write(post("/api/v1/sessions"),"operator",Map.of("targetId","jvm","grantId",grant)).andExpect(status().isConflict());
+        write(put("/api/v1/assets/asset/policy"),"admin",Map.of("expectedRevision",2,"paused",false,"maxSessions",1))
+                .andExpect(status().isOk());
+        String session=open(grant,"operator","OPENING");
+        write(post("/api/v1/sessions"),"operator",Map.of("targetId","jvm","grantId",grant)).andExpect(status().isConflict());
+        complete(claim("ATTACH"),"ATTACHED",null);
+        String task=submit(session,"sample");
+        complete(claim("SNAPSHOT"),"DONE",snapshotResult());
+        String ref=id(write(post("/api/v1/tasks/"+task+"/references"),"operator",
+                Map.of("readerId","operator2","expiresAt",clock.millis()+60000)).andExpect(status().isOk()),"referenceId");
+        read(get("/api/v1/references/"+ref),"operator2").andExpect(status().isForbidden());
+        approvedGrant("operator2");
+        read(get("/api/v1/references/"+ref),"operator2").andExpect(jsonPath("$.result.threadCount").value(3));
+        read(delete("/api/v1/references/"+ref),"operator").andExpect(status().isOk());
+        read(get("/api/v1/references/"+ref),"operator2").andExpect(status().isForbidden());
+        read(get("/api/v1/management/channels"),"admin").andExpect(jsonPath("$[0].online").value(true));
+        read(get("/api/v1/management/channels"),"operator").andExpect(status().isForbidden());
+    }
+
+    @Test
     void expiredOperationStaysUncertainUntilCancellationConfirmsIt() throws Exception {
         String grant = approvedGrant("operator");
         String session = open(grant, "operator", "OPENING");
