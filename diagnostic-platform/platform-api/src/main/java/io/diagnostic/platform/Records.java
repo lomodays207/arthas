@@ -71,7 +71,7 @@ final class Records {
         }
     }
 
-    enum Coverage { COMPLETE, TRUNCATED, NO_HIT }
+    enum Coverage { COMPLETE, PARTIAL, TRUNCATED, NO_HIT }
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     record Observation(@Size(max=160) @Pattern(regexp="[a-zA-Z0-9_$.<>/]+") String className,
                        @Size(max=100) @Pattern(regexp="[a-zA-Z0-9_$<>]+") String methodName,

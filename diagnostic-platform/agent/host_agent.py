@@ -151,6 +151,11 @@ class Agent:
         if op["type"] == "CANCEL":
             # A serial worker cannot be running another request. An interrupted native query
             # requires proof of termination before the platform can release its task slot.
+            for receipt in self.db.execute("SELECT operation,body FROM receipt WHERE body IS NOT NULL"):
+                previous = json.loads(receipt["operation"])
+                if (previous.get("taskId") == op["taskId"] and previous["type"] == "SNAPSHOT" and
+                        json.loads(receipt["body"])["completion"] in ("DONE","FAILED")):
+                    return "STOPPED", None
             return ("STOPPED" if row["state"] == "CLOSED" else "UNKNOWN"), None
         if (op["type"] == "SNAPSHOT" and row["state"] == "READY" and
                 time.time()*1000 < min(op["taskDeadline"],op["leaseUntil"])):
@@ -158,6 +163,9 @@ class Agent:
                 return self.call(row,action,**args)
             if op.get("capability") in (None,"JVM_OVERVIEW"):
                 return "DONE", native.snapshot(call)
+            params = op.get("criteria") or {}
+            if params.get("className") and params["className"]+"#"+params["methodName"] not in self.cfg.get("allowedMethods",[]):
+                return "FAILED", None
             return "DONE", diagnostic(call,op["capability"],op["criteria"],self.cfg.get("allowedMethods",[]),
                                       min(op["leaseUntil"],op["taskDeadline"]))
         return "UNKNOWN", None

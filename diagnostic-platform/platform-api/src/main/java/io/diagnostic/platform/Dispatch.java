@@ -128,6 +128,7 @@ class Dispatch {
                 """, id, sessionId, current.targetId(), actor.id(), current.generation(), input.capability().name(),
                 parameters, key, deadline);
         store.write("UPDATE target_control SET active_task_id = ? WHERE target_id = ?", id, current.targetId());
+        appendEvent(id, TaskState.QUEUED);
         enqueue(current.targetId(), current.generation(), OperationType.SNAPSHOT, id, store.now());
         store.audit(actor.id(), "TASK_QUEUED", current.targetId(), current.grantId(), id, null);
         return view(task(id));
@@ -271,6 +272,22 @@ class Dispatch {
             throw ApiError.conflict("TASK_STATE_CHANGED");
         }
         store.write("UPDATE diagnosis_task SET state = ? WHERE task_id = ?", next.name(), task.taskId());
+        appendEvent(task.taskId(), next);
+    }
+
+    record TaskEvent(long sequenceNo, String state, long occurredAt) {}
+
+    private void appendEvent(String id, TaskState state) {
+        // All writers already hold the target lock.
+        long next = store.values(Long.class, "SELECT COALESCE(MAX(sequence_no),0) + 1 FROM task_event WHERE task_id=?", id).get(0);
+        store.write("INSERT INTO task_event(task_id,sequence_no,state,occurred_at) VALUES (?,?,?,?)",
+                id, next, state.name(), store.now());
+    }
+
+    @Transactional(readOnly = true)
+    public List<TaskEvent> events(AccessFilter.Actor actor, String id, long after) {
+        lookupTask(actor,id);
+        return store.list(TaskEvent.class, "SELECT sequence_no,state,occurred_at FROM task_event WHERE task_id=? AND sequence_no>? ORDER BY sequence_no LIMIT 32",id,after);
     }
 
     void finish(Task task, TaskState next, String result) {

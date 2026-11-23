@@ -48,6 +48,7 @@ def frame(item):
 def diagnostic(call, capability, criteria, allowed_methods, deadline):
     p = criteria or {}
     rows = []
+    partial = False
     if capability == "THREAD_LIST":
         for event in events(call,"thread"):
             for thread in event.get("threadStats",[]):
@@ -79,7 +80,9 @@ def diagnostic(call, capability, criteria, allowed_methods, deadline):
             command = kind + (" -c 1 " if kind=="monitor" else " ") + selection
             if kind == "watch":
                 command += " '#cost'"
-            for event in observe(call,command+" -n 1",kind,deadline):
+            # The first invocation can already be on-stack when Trace attaches.
+            limit = "2" if kind == "trace" else "1"
+            for event in observe(call,command+" -n "+limit,kind,deadline):
                 if kind == "watch":
                     rows.append(dict(className=clazz,methodName=method,costMs=event["cost"],state=event["accessPoint"]))
                 elif kind == "stack":
@@ -89,11 +92,14 @@ def diagnostic(call, capability, criteria, allowed_methods, deadline):
                         rows.append(dict(className=clazz,methodName=method,success=m["success"],failed=m["failed"],
                                          costMs=m["cost"]/max(1,m["total"])))
                 else:
+                    if rows:
+                        continue
+                    partial = True
                     nodes = [(event["root"],0)]
                     while nodes and len(rows)<13:
                         node,depth = nodes.pop()
                         if node.get("type") == "method":
                             rows.append(dict(frame(node),costMs=node.get("cost",0)/1e6,depth=depth))
                         nodes.extend((child,depth+1) for child in reversed(node.get("children",[])))
-    coverage = "TRUNCATED" if len(rows)>12 else ("COMPLETE" if rows else "NO_HIT")
+    coverage = "TRUNCATED" if len(rows)>12 else ("COMPLETE" if rows else "PARTIAL" if partial else "NO_HIT")
     return dict(coverage=coverage, sampledAt=int(time.time()*1000),rows=rows[:12])

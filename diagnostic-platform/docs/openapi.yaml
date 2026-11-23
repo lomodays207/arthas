@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Diagnostic Platform API
   version: 0.1.0
-  description: Local integration API. JVM_OVERVIEW is the currently enabled diagnostic capability.
+  description: Session, typed diagnostic task, event replay and edge delivery API.
 security:
   - bearerToken: []
 paths:
@@ -76,7 +76,7 @@ paths:
               additionalProperties: false
               properties:
                 targetId: {type: string}
-                capabilities: {type: array, items: {const: JVM_OVERVIEW}}
+                capabilities: {type: array, items: {$ref: '#/components/schemas/Capability'}}
                 ticketId: {type: string}
                 requestedUntil: {type: integer, description: Expiry in Unix milliseconds}
       responses:
@@ -172,7 +172,8 @@ paths:
               additionalProperties: false
               required: [capability]
               properties:
-                capability: {const: JVM_OVERVIEW}
+                capability: {$ref: '#/components/schemas/Capability'}
+                criteria: {$ref: '#/components/schemas/Criteria'}
       responses:
         '202':
           description: Task accepted or matching prior task
@@ -192,6 +193,17 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Task'}
         '403': {description: Task or grant not available to this principal}
+  /api/v1/tasks/{id}/events:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: streamTaskEvents
+      parameters:
+        - {name: Last-Event-ID, in: header, schema: {type: integer, minimum: 0}}
+      responses:
+        '200': {description: SSE stream of durable task state events in sequence order}
+        '403': {description: Grant denied}
+        '429': {description: Subscriber capacity reached}
   /api/v1/tasks/{id}/cancel:
     parameters:
       - $ref: '#/components/parameters/Id'
@@ -222,6 +234,7 @@ paths:
                 leaseToken: {type: string, format: uuid}
                 completion: {enum: [ATTACHED, DONE, STOPPED, RELEASED, FAILED, UNKNOWN, TARGET_GONE]}
                 result: {$ref: '#/components/schemas/Snapshot'}
+                evidence: {$ref: '#/components/schemas/Evidence'}
       responses:
         '204': {description: Completion recorded}
         '409': {description: Lease, generation, operation state or completion conflict}
@@ -270,7 +283,7 @@ components:
       properties:
         taskId: {type: string, format: uuid}
         targetId: {type: string}
-        capability: {const: JVM_OVERVIEW}
+        capability: {$ref: '#/components/schemas/Capability'}
         state:
           enum: [QUEUED, DISPATCHING, RUNNING, CANCEL_REQUESTED, RECONCILING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT]
         generation: {type: integer}
@@ -279,6 +292,44 @@ components:
           anyOf:
             - $ref: '#/components/schemas/Snapshot'
             - {type: 'null'}
+        evidence:
+          anyOf:
+            - $ref: '#/components/schemas/Evidence'
+            - {type: 'null'}
+    Capability:
+      enum: [JVM_OVERVIEW, THREAD_LIST, THREAD_DETAIL, CLASS_METHOD_LOOKUP, METHOD_WATCH, METHOD_TRACE, METHOD_STACK, METHOD_MONITOR]
+    Criteria:
+      type: object
+      additionalProperties: false
+      properties:
+        threadId: {type: integer, minimum: 1}
+        className: {type: string}
+        methodName: {type: string}
+        loader: {type: string, pattern: '^[a-f0-9]{1,8}$'}
+    Evidence:
+      type: object
+      additionalProperties: false
+      required: [coverage, sampledAt, rows]
+      properties:
+        coverage: {enum: [COMPLETE, PARTIAL, TRUNCATED, NO_HIT]}
+        sampledAt: {type: integer, minimum: 1}
+        rows: {type: array, maxItems: 12, items: {$ref: '#/components/schemas/Observation'}}
+    Observation:
+      type: object
+      additionalProperties: false
+      properties:
+        threadId: {type: integer}
+        className: {type: string}
+        methodName: {type: string}
+        loader: {type: string}
+        descriptor: {type: string}
+        state: {type: string}
+        costMs: {type: number}
+        cpuPercent: {type: number}
+        success: {type: integer}
+        failed: {type: integer}
+        line: {type: integer}
+        depth: {type: integer}
     Snapshot:
       type: object
       additionalProperties: false

@@ -2,6 +2,7 @@
 const el = id => document.getElementById(id);
 const show = (id, visible) => { el(id).hidden = !visible; };
 const path = encodeURIComponent;
+let stream;
 let token = '', session, task, grants = [], timer, epoch = 0, pendingKey;
 async function api(url, method = 'GET', body, key) {
   const current = epoch;
@@ -98,7 +99,7 @@ function renderTask(t) {
     const ev = t.evidence;
     const caption = document.createElement('p');
     caption.textContent = new Date(ev.sampledAt).toLocaleString()+' · '+
-      ({COMPLETE:'已返回',TRUNCATED:'已截断',NO_HIT:'未命中'}[ev.coverage]);
+      ({COMPLETE:'已返回',PARTIAL:'命中但调用树不完整',TRUNCATED:'已截断',NO_HIT:'未命中'}[ev.coverage]);
     el('observations').append(caption);
     const table = document.createElement('table');
     const keys = [...new Set(ev.rows.flatMap(row => Object.keys(row)))];
@@ -138,6 +139,42 @@ action('open', async () => {
   options('capability',capOptions(g.capabilities.split(',')),'key',x=>x.label); fields();
   show('workspace',true); await monitor(session.sessionId);
 });
+async function follow(id) {
+  stream?.abort();
+  const controller = new AbortController();
+  stream = controller;
+  let cursor = 0;
+  while (!controller.signal.aborted && task?.taskId === id && !terminal(task.state)) {
+    try {
+      const response = await fetch('/api/v1/tasks/'+path(id)+'/events',{
+        headers:{Authorization:'Bearer '+token,'Last-Event-ID':String(cursor)},signal:controller.signal});
+      if (!response.ok) return;
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '';
+      for (;;) {
+        const {value,done} = await reader.read();
+        if (done) break;
+        buffer += value;
+        let end;
+        while ((end = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0,end); buffer = buffer.slice(end+2);
+          const data = block.split('\n').find(line=>line.startsWith('data:'));
+          if (data && task?.taskId === id) {
+            const event = JSON.parse(data.slice(5)); cursor = event.sequenceNo;
+            record(id+' · '+event.state);
+            if (terminal(event.state)) {
+              const final = await api('/tasks/'+path(id));
+              if (task?.taskId === id) renderTask(final);
+              return;
+            }
+          }
+        }
+      }
+    } catch (e) { if (controller.signal.aborted) return; }
+    await new Promise(resolve=>setTimeout(resolve,1000));
+  }
+}
+
 action('sample', async () => {
   if (task && !terminal(task.state)) throw Error('当前任务仍在执行');
   pendingKey ||= crypto.randomUUID();
@@ -149,14 +186,14 @@ action('sample', async () => {
       loader:el('loader').value.trim() || null};
   }
   renderTask(await api(sessionUrl()+'/tasks','POST',{capability,criteria},pendingKey));
-  pendingKey = null;
+  pendingKey = null; void follow(task.taskId);
 });
 action('cancel', async () => {
   if (!task) throw Error('当前无任务');
   renderTask(await api('/tasks/'+path(task.taskId)+'/cancel','POST'));
 });
 action('close', async () => {
-  await api(sessionUrl(),'DELETE'); clearTimeout(timer); session = task = pendingKey = null;
+  await api(sessionUrl(),'DELETE'); stream?.abort(); clearTimeout(timer); session = task = pendingKey = null;
   el('metrics').replaceChildren(); el('observations').replaceChildren(); show('workspace',false); record('会话已关闭');
 });
 action('logout', async () => {
