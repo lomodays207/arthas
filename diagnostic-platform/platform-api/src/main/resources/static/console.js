@@ -45,14 +45,14 @@ async function refresh() {
 }
 const caps = {JVM_OVERVIEW:'JVM 快照',THREAD_LIST:'线程热点',THREAD_DETAIL:'线程堆栈',
   CLASS_METHOD_LOOKUP:'类及方法定位',METHOD_WATCH:'方法观测',METHOD_TRACE:'调用树',
-  METHOD_STACK:'调用路径',METHOD_MONITOR:'调用统计'};
+  METHOD_STACK:'调用路径',METHOD_MONITOR:'调用统计',CODE_VIEW:'运行代码查看'};
 const capOptions = values => values.map(k => ({key:k,label:caps[k]}));
 options('requested', capOptions(Object.keys(caps)), 'key', x => x.label);
 el('requested').options[0].selected = true;
 function fields() {
   const cap = el('capability').value;
   show('threadField',cap === 'THREAD_DETAIL');
-  show('methodFields',cap === 'CLASS_METHOD_LOOKUP' || cap.startsWith('METHOD_'));
+  show('methodFields',cap === 'CODE_VIEW' || cap === 'CLASS_METHOD_LOOKUP' || cap.startsWith('METHOD_'));
 }
 action('capability',fields,'change');
 action('login', async () => {
@@ -100,8 +100,9 @@ action('audit', async () => {
 const sessionUrl = () => '/sessions/'+path(session.sessionId);
 const terminal = state => ['SUCCEEDED','FAILED','CANCELLED','TIMED_OUT'].includes(state);
 function renderTask(t) {
+  if (task?.taskId !== t.taskId) el('source').textContent = '';
   if (!task || task.state !== t.state) record(t.taskId+' · '+t.state);
-  task = t;
+  task = t; show('readSource',t.capability === 'CODE_VIEW' && t.state === 'SUCCEEDED');
   el('metrics').replaceChildren(); el('observations').replaceChildren();
   if (t.evidence) {
     const ev = t.evidence;
@@ -196,8 +197,8 @@ action('sample', async () => {
   const capability = el('capability').value;
   let criteria;
   if (capability === 'THREAD_DETAIL') criteria = {threadId:Number(el('threadId').value)};
-  if (capability === 'CLASS_METHOD_LOOKUP' || capability.startsWith('METHOD_')) {
-    criteria = {className:el('className').value.trim(),methodName:el('methodName').value.trim(),
+  if (capability === 'CODE_VIEW' || capability === 'CLASS_METHOD_LOOKUP' || capability.startsWith('METHOD_')) {
+    criteria = {className:el('className').value.trim(),methodName:el('methodName').value.trim() || null,
       loader:el('loader').value.trim() || null};
   }
   renderTask(await api(sessionUrl()+'/tasks','POST',{capability,criteria},pendingKey));
@@ -209,7 +210,7 @@ action('cancel', async () => {
 });
 action('close', async () => {
   await api(sessionUrl(),'DELETE'); stream?.abort(); clearTimeout(timer); session = task = pendingKey = null;
-  el('metrics').replaceChildren(); el('observations').replaceChildren(); show('workspace',false); record('会话已关闭');
+  el('metrics').replaceChildren(); el('observations').replaceChildren(); el('source').textContent=''; show('readSource',false); show('workspace',false); record('会话已关闭');
 });
 action('logout', async () => {
   try { if (session) await api(sessionUrl(),'DELETE'); }
@@ -249,3 +250,11 @@ action('revokeRef',async()=>{
 });
 
 action('shared',async()=>{ const v=await api(sessionUrl()+'/overview','POST'); record(v.pending?'共享快照采集中':'已复用最近五秒的快照'); });
+
+let previewTimer;
+action('readSource',async()=>{
+  el('source').textContent = '';
+  const value=await api('/tasks/'+path(task.taskId)+'/source');
+  el('source').textContent=value.source;
+  clearTimeout(previewTimer); previewTimer=setTimeout(()=>{el('source').textContent='';},60000);
+});

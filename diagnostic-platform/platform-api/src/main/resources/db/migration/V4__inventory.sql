@@ -1,0 +1,4 @@
+ALTER TABLE asset_instance ADD COLUMN inventory_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE asset_instance ADD COLUMN source_revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE asset_instance ADD COLUMN source_digest VARCHAR(64);
+ALTER TABLE jvm_target ADD COLUMN retired BOOLEAN NOT NULL DEFAULT FALSE;

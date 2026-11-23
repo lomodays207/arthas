@@ -17,10 +17,11 @@ for component in ("platform-api","gateway"):
     if len(jars)!=1:
         raise SystemExit("Expected one packaged artifact in "+component+"/target")
     files["lib/"+component+".jar"] = jars[0]
-for name in ("host_agent.py","native.py","diagnostics.py"):
+for name in ("host_agent.py","native.py","diagnostics.py","identity.py"):
     files["agent/"+name] = ROOT/"agent"/name
-for name in ("pilot.md","openapi.yaml","gateway-contract.md"):
+for name in ("pilot.md","openapi.yaml","gateway-contract.md","integrations.md"):
     files["docs/"+name] = ROOT/"docs"/name
+files["tools/ticket-forwarder.py"]=ROOT/"tools"/"ticket-forwarder.py"
 launcher = """#!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

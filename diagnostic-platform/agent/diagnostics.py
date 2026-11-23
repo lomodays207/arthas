@@ -103,3 +103,18 @@ def diagnostic(call, capability, criteria, allowed_methods, deadline):
                         nodes.extend((child,depth+1) for child in reversed(node.get("children",[])))
     coverage = "TRUNCATED" if len(rows)>12 else ("COMPLETE" if rows else "PARTIAL" if partial else "NO_HIT")
     return dict(coverage=coverage, sampledAt=int(time.time()*1000),rows=rows[:12])
+
+
+def source_preview(call,criteria,allowed_classes):
+    clazz,method,loader=criteria["className"],criteria.get("methodName"),criteria["loader"]
+    require(clazz in allowed_classes and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$.]{0,149}",clazz) and
+            re.fullmatch("[0-9a-f]{1,8}",loader) and
+            (method is None or re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]{0,79}",method)),"Invalid source selector")
+    output=events(call,"jad --source-only -c "+loader+" "+clazz+(" "+method if method else ""))
+    values=[e["source"] for e in output if e.get("type")=="jad" and isinstance(e.get("source"),str)]
+    text=values[0] if len(values)==1 else ""
+    row=dict(className=clazz,loader=loader)
+    if method:
+        row["methodName"]=method
+    return dict(coverage="TRUNCATED" if len(text)>960 else "COMPLETE" if text else "NO_HIT",
+                sampledAt=int(time.time()*1000),rows=[row] if text else []),text[:960]

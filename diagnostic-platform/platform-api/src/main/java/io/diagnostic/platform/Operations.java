@@ -22,6 +22,24 @@ class Operations {
     private final Dispatch dispatch;
     Operations(Store store,Dispatch dispatch) { this.store=store; this.dispatch=dispatch; }
 
+    record Zone(String zoneId,boolean paused,long revision) {}
+    record ZoneChange(@NotNull Boolean paused,@Positive long expectedRevision) {}
+
+    @GetMapping("/management/zones")
+    List<Zone> zones(@RequestAttribute(ACTOR) Actor actor) {
+        actor.require(ADMIN);
+        return store.list(Zone.class,"SELECT * FROM zone_policy ORDER BY zone_id LIMIT 200");
+    }
+
+    @PutMapping("/management/zones/{id}") @Transactional
+    Zone zone(@RequestAttribute(ACTOR) Actor actor,@PathVariable String id,@Valid @RequestBody ZoneChange change) {
+        actor.require(ADMIN);
+        if (store.write("UPDATE zone_policy SET paused=?,revision=revision+1 WHERE zone_id=? AND revision=?",
+                change.paused(),id,change.expectedRevision())!=1) throw ApiError.conflict("ZONE_REVISION_CHANGED");
+        store.audit(actor.id(),"ZONE_POLICY_CHANGED",null,null,null,id);
+        return store.get(Zone.class,"SELECT * FROM zone_policy WHERE zone_id=?",id);
+    }
+
     @GetMapping("/management/channels")
     List<Channel> channels(@RequestAttribute(ACTOR) Actor actor) {
         actor.require(ADMIN);
@@ -75,6 +93,7 @@ class Operations {
                 """,task.targetId(),share.readerId())!=1) throw ApiError.forbidden();
         String ref=Store.id();
         store.write("INSERT INTO evidence_reference VALUES (?,?,?,?,?,FALSE)",ref,id,actor.id(),share.readerId(),share.expiresAt());
+        ticketEvent("REFERENCE_SHARED",ref,grant.ticketId());
         store.audit(actor.id(),"EVIDENCE_SHARED",task.targetId(),session.grantId(),id,share.readerId());
         return reference(ref);
     }
@@ -104,8 +123,33 @@ class Operations {
         if (actor.role()!=ADMIN && !ref.ownerId().equals(actor.id())) throw ApiError.forbidden();
         if (store.write("UPDATE evidence_reference SET revoked=TRUE WHERE reference_id=? AND revoked=FALSE",id)==1) {
             var task=dispatch.task(ref.taskId());
+            var session=dispatch.session(task.sessionId());
+            var grant=store.get(Records.Grant.class,"SELECT * FROM diagnosis_grant WHERE grant_id=?",session.grantId());
+            ticketEvent("REFERENCE_REVOKED",id,grant.ticketId());
             store.audit(actor.id(),"EVIDENCE_REVOKED",task.targetId(),null,task.taskId(),null);
         }
+    }
+
+    record TicketEvent(long sequenceNo,String eventId,String eventType,String referenceId,String ticketId,long occurredAt) {}
+
+    private void ticketEvent(String type,String ref,String ticket) {
+        store.write("""
+                INSERT INTO ticket_outbox(event_id,event_type,reference_id,ticket_id,occurred_at)
+                VALUES (?,?,?,?,?)
+                """,Store.id(),type,ref,ticket,store.now());
+    }
+
+    @GetMapping("/integrations/tickets/events")
+    List<TicketEvent> outstanding(@RequestAttribute(ACTOR) Actor actor) {
+        actor.require(INTEGRATION);
+        return store.list(TicketEvent.class,"SELECT * FROM ticket_outbox WHERE acknowledged=FALSE ORDER BY sequence_no LIMIT 100");
+    }
+
+    @PostMapping("/integrations/tickets/events/{id}/ack") @Transactional
+    void acknowledge(@RequestAttribute(ACTOR) Actor actor,@PathVariable String id) {
+        actor.require(INTEGRATION);
+        if (store.count("SELECT COUNT(*) FROM ticket_outbox WHERE event_id=?",id)==0) throw ApiError.missing();
+        store.write("UPDATE ticket_outbox SET acknowledged=TRUE WHERE event_id=?",id);
     }
 
     private Reference reference(String id) {

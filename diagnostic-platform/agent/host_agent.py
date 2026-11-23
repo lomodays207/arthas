@@ -19,23 +19,21 @@ import time
 from urllib.parse import urlsplit
 
 import native
-from diagnostics import diagnostic
+from diagnostics import diagnostic, source_preview
 
 
-def fingerprint(pid, jdk):
-    proc = Path("/proc") / str(pid)
-    native.require(proc.stat().st_uid == os.geteuid(), "Target UID differs")
-    native.require((proc / "exe").samefile(jdk / "bin/java"), "Target executable differs")
-    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    ticks = native.process_start_ticks(pid)
-    return "linux:" + hashlib.sha256(f"{boot}:{os.geteuid()}:{pid}:{ticks}".encode()).hexdigest()
+from identity import container_context, fingerprint, profile
 
 
-def discover(jdk):
+def discover(jdk, container=False):
+    runtime = profile(jdk)
     for proc in Path("/proc").iterdir():
         if proc.name.isdecimal():
             try:
-                print(json.dumps(dict(pid=int(proc.name), fingerprint=fingerprint(int(proc.name), jdk))))
+                pid = int(proc.name)
+                context = container_context(pid) if container else None
+                print(json.dumps(dict(pid=pid, fingerprint=fingerprint(pid,jdk,context), runtimeProfile=runtime,
+                                      container=context)))
             except (OSError, RuntimeError):
                 continue
 
@@ -43,10 +41,15 @@ def discover(jdk):
 class Agent:
     def __init__(self, cfg, root):
         self.cfg, self.root = cfg, root
+        self.previews = {}
         self.pid, self.jdk = int(cfg["pid"]), Path(cfg["jdk"]).resolve()
-        self.url = urlsplit(cfg["gateway"])
-        native.require(self.url.scheme == "https" and self.url.hostname and self.url.path in ("", "/")
-                       and not self.url.username and not self.url.query and not self.url.fragment, "Invalid gateway")
+        native.require(profile(self.jdk) == cfg["runtimeProfile"], "Configured runtime profile differs")
+        self.urls = [urlsplit(url) for url in cfg.get("gateways",[cfg.get("gateway","")])]
+        native.require(0 < len(self.urls) <= 4, "Invalid gateway set")
+        for url in self.urls:
+            native.require(url.scheme == "https" and url.hostname and url.path in ("", "/")
+                           and not url.username and not url.query and not url.fragment, "Invalid gateway")
+        self.gateway_index = 0
         self.tls = ssl.create_default_context(cafile=cfg["ca"])
         self.tls.load_cert_chain(cfg["cert"], cfg["key"])
         self.db = sqlite3.connect(root / "journal.db")
@@ -63,20 +66,27 @@ class Agent:
         self.db.commit()
 
     def edge(self, path, body=None):
-        con = http.client.HTTPSConnection(self.url.hostname, self.url.port or 443, context=self.tls, timeout=5)
+        url = self.urls[self.gateway_index]
+        con = http.client.HTTPSConnection(url.hostname, url.port or 443, context=self.tls, timeout=5)
         try:
             con.request("POST", "/edge/v1/"+path, json.dumps(body) if body else None,
                         {"Content-Type":"application/json"})
             response = con.getresponse()
             raw = response.read(16385)
+            if response.status == 409 and path.startswith("operations/") and len(raw)<=16384:
+                if json.loads(raw).get("code")=="OPERATION_STATE_CHANGED":
+                    return None  # Center already fenced this generation; never execute it again.
             native.require(len(raw) <= 16384 and response.status in (200,204),
                            "Gateway status " + str(response.status))
             return json.loads(raw) if raw else None
+        except (OSError,http.client.HTTPException,RuntimeError):
+            self.gateway_index=(self.gateway_index+1)%len(self.urls)
+            raise
         finally:
             con.close()
 
     def same(self):
-        return fingerprint(self.pid, self.jdk) == self.cfg["fingerprint"]
+        return fingerprint(self.pid, self.jdk, self.cfg.get("container")) == self.cfg["fingerprint"]
 
     def call(self, row, action, **args):
         native.require(self.same(), "Target identity changed")
@@ -164,6 +174,14 @@ class Agent:
             if op.get("capability") in (None,"JVM_OVERVIEW"):
                 return "DONE", native.snapshot(call)
             params = op.get("criteria") or {}
+            if op["capability"] == "CODE_VIEW":
+                allowed=self.cfg.get("allowedCodeClasses",[])
+                if params.get("className") not in allowed:
+                    return "FAILED", None
+                evidence,preview=source_preview(call,params,allowed)
+                if preview:
+                    self.previews[op["operationId"]]=(time.monotonic()+60,preview)
+                return "DONE",evidence
             if params.get("className") and params["className"]+"#"+params["methodName"] not in self.cfg.get("allowedMethods",[]):
                 return "FAILED", None
             return "DONE", diagnostic(call,op["capability"],op["criteria"],self.cfg.get("allowedMethods",[]),
@@ -171,10 +189,14 @@ class Agent:
         return "UNKNOWN", None
 
     def tick(self):
+        self.previews={key:value for key,value in self.previews.items() if value[0]>time.monotonic()}
         for row in self.db.execute("SELECT * FROM receipt WHERE sent=0 ORDER BY rowid LIMIT 20").fetchall():
             op = json.loads(row["operation"])
             body = json.loads(row["body"]) if row["body"] else dict(leaseToken=op["leaseToken"],completion="UNKNOWN")
+            if row["id"] in self.previews:
+                body["preview"]=self.previews[row["id"]][1]
             self.edge("operations/"+row["id"]+"/complete",body)
+            self.previews.pop(row["id"],None)
             self.db.execute("UPDATE receipt SET sent=1 WHERE id=?",(row["id"],))
             self.db.commit()
         for row in self.db.execute("SELECT generation FROM releases ORDER BY generation").fetchall():
@@ -228,9 +250,10 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--discover",metavar="JDK",type=Path)
     modes.add_argument("--config",type=Path)
+    parser.add_argument("--container",action="store_true",help="Require verified same-container membership in discovery")
     args = parser.parse_args()
     if args.discover:
-        discover(args.discover.resolve())
+        discover(args.discover.resolve(),args.container)
         return
     os.umask(0o077)
     cfg = json.loads(args.config.read_text())

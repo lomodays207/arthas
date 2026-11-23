@@ -40,6 +40,12 @@ class ApiErrors {
         return ResponseEntity.status(error.status).body(Map.of("code", error.code));
     }
 
+    @ExceptionHandler({org.springframework.web.bind.MethodArgumentNotValidException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class})
+    ResponseEntity<Map<String,String>> invalidBody() {
+        return ResponseEntity.badRequest().body(Map.of("code","INVALID_REQUEST_BODY"));
+    }
+
     @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
     ResponseEntity<Map<String, String>> duplicate() {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("code", "DUPLICATE_RECORD"));

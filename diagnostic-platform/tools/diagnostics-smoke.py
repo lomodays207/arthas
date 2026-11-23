@@ -7,7 +7,7 @@ import runpy
 import time
 
 smoke = runpy.run_path(str(Path(__file__).with_name("arthas-smoke.py")))
-from diagnostics import diagnostic
+from diagnostics import diagnostic, source_preview
 
 
 def exercise(call, *_):
@@ -37,6 +37,8 @@ def exercise(call, *_):
         else:
             assert data["rows"], kind
         assert "synthetic fixture" not in json.dumps(data)
+    evidence, source = source_preview(call,selected,[clazz])
+    assert "handleRequest" in source and evidence["rows"][0]["loader"] == selected["loader"]
     selected["methodName"] = "idleProbe"
     assert collect("METHOD_WATCH",selected)["coverage"] == "NO_HIT"
     return "thread, class, Watch, Trace, Stack, Monitor, no-hit interrupt"

@@ -63,6 +63,7 @@ final class Records {
                 case JVM_OVERVIEW, THREAD_LIST -> criteria == null;
                 case THREAD_DETAIL -> criteria != null && criteria.threadId() != null && criteria.className() == null
                         && criteria.methodName() == null && criteria.loader() == null;
+                case CODE_VIEW -> criteria != null && criteria.threadId()==null && criteria.className()!=null && criteria.loader()!=null;
                 default -> criteria != null && criteria.threadId() == null && criteria.className() != null
                         && criteria.methodName() != null
                         && (capability == Capability.CLASS_METHOD_LOOKUP || criteria.loader() != null);
@@ -107,7 +108,7 @@ final class Records {
                     @NotNull @PositiveOrZero Long nonHeapUsedBytes, @NotNull @PositiveOrZero Long uptimeMillis,
                     @NotNull @PositiveOrZero Integer threadCount) {}
     record CompletionInput(@NotBlank String leaseToken, @NotNull Completion completion,
-                           @Valid Snapshot result, @Valid Evidence evidence) {}
+                           @Valid Snapshot result, @Valid Evidence evidence, @Size(max=960) String preview) {}
 
     record Audit(String eventId, String actorId, String action, String targetId, String grantId,
                  String taskId, String reasonCode, long occurredAt) {}

@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
@@ -39,6 +40,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "diagnostic.auth.operator-token=synthetic-operator-token-for-testing",
         "diagnostic.auth.operator2-token=synthetic-operator2-token-for-testing",
         "diagnostic.auth.executor-token=synthetic-executor-token-for-testing",
+        "DIAGNOSTIC_CODE_VIEW_APPS=synthetic",
+        "DIAGNOSTIC_ITSM_TOKEN=synthetic-itsm-token-for-testing-123",
         "diagnostic.sweep-delay-ms=3600000"
 })
 @AutoConfigureMockMvc
@@ -59,7 +62,7 @@ class ControlPlaneTest {
 
     @BeforeEach
     void reset() throws Exception {
-        for (String table : new String[] {"audit_event", "edge_event_inbox", "operation_outbox", "diagnosis_task",
+        for (String table : new String[] {"ticket_outbox","audit_event", "edge_event_inbox", "operation_outbox", "diagnosis_task",
                 "diagnosis_session", "target_control", "grant_decision", "diagnosis_grant", "jvm_target",
                 "asset_member", "asset_instance"}) {
             db.update("DELETE FROM " + table);
@@ -118,6 +121,48 @@ class ControlPlaneTest {
     }
 
     @Test
+    void inventoryReplayAndRetirementFenceOldAccess() throws Exception {
+        var asset=Map.of("assetId","asset","appId","synthetic","environmentName","test","zoneId","zone-a",
+                "agentId","local-agent","displayName","From inventory","members",List.of("operator"));
+        var update=Map.of("sourceRevision",10,"active",true,"asset",asset);
+        write(put("/api/v1/inventory/assets/asset"),"admin",update).andExpect(status().isOk());
+        write(put("/api/v1/inventory/assets/asset"),"admin",update).andExpect(status().isOk());
+        String session=open(approvedGrant("operator"),"operator","OPENING");
+        complete(claim("ATTACH"),"ATTACHED",null);
+        write(put("/api/v1/inventory/assets/asset"),"admin",Map.of("sourceRevision",11,"active",false,"asset",asset))
+                .andExpect(status().isOk());
+        write(put("/api/v1/inventory/assets/asset"),"admin",update).andExpect(status().isConflict());
+        write(post("/api/v1/sessions/"+session+"/heartbeat"),"operator",null).andExpect(status().isConflict());
+        read(get("/api/v1/assets/asset/jvms"),"operator").andExpect(jsonPath("$.length()").value(0));
+        write(post("/api/v1/grants"),"operator",grantRequest()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void sourceIsEphemeralAndSeparatelyAuthorized() throws Exception {
+        long now=clock.millis();
+        var request=Map.of("targetId","jvm","capabilities",new String[]{"CODE_VIEW"},"ticketId","case","requestedUntil",now+900000);
+        String grant=id(write(post("/api/v1/grants"),"operator",request).andExpect(status().isCreated()),"grantId");
+        approve(grant);
+        String session=open(grant,"operator","OPENING");
+        complete(claim("ATTACH"),"ATTACHED",null);
+        String id=id(write(post("/api/v1/sessions/"+session+"/tasks").header("Idempotency-Key","preview"),"operator",
+                Map.of("capability","CODE_VIEW","criteria",Map.of("className","example.Sample","loader","8a")))
+                .andExpect(status().isAccepted()),"taskId");
+        JsonNode op=claim("SNAPSHOT");
+        String preview="synthetic-source-marker";
+        write(post("/api/v1/edge/operations/"+op.get("operationId").asText()+"/complete"),"executor",Map.of(
+                "leaseToken",op.get("leaseToken").asText(),"completion","DONE","preview",preview,
+                "evidence",Map.of("coverage","COMPLETE","sampledAt",now,"rows",List.of())))
+                .andExpect(status().isNoContent());
+        read(get("/api/v1/tasks/"+id+"/source"),"operator").andExpect(jsonPath("$.source").value(preview));
+        read(get("/api/v1/tasks/"+id+"/source"),"operator2").andExpect(status().isForbidden());
+        for (String table:List.of("diagnosis_task","edge_event_inbox"))
+            assertEquals(0,db.queryForObject("SELECT COUNT(*) FROM "+table+" WHERE result_json LIKE ?",Integer.class,"%"+preview+"%"));
+        clock.advance(61000);
+        read(get("/api/v1/tasks/"+id+"/source"),"operator").andExpect(status().isNotFound());
+    }
+
+    @Test
     void sharesSnapshotOnlyWithinGenerationAndAuthorizedSession() throws Exception {
         String first=open(approvedGrant("operator"),"operator","OPENING");
         String second=open(approvedGrant("operator2"),"operator2","OPENING");
@@ -154,6 +199,12 @@ class ControlPlaneTest {
         read(get("/api/v1/references/"+ref),"operator2").andExpect(jsonPath("$.result.threadCount").value(3));
         read(delete("/api/v1/references/"+ref),"operator").andExpect(status().isOk());
         read(get("/api/v1/references/"+ref),"operator2").andExpect(status().isForbidden());
+        var feed=get("/api/v1/integrations/tickets/events").header("Authorization","Bearer synthetic-itsm-token-for-testing-123");
+        var batch=json.readTree(mvc.perform(feed).andExpect(jsonPath("$[0].ticketId").value("test-ticket"))
+                .andExpect(jsonPath("$[1].eventType").value("REFERENCE_REVOKED")).andReturn().getResponse().getContentAsString());
+        String ackUrl="/api/v1/integrations/tickets/events/"+batch.get(0).get("eventId").asText()+"/ack";
+        mvc.perform(post(ackUrl).header("Authorization","Bearer synthetic-itsm-token-for-testing-123")).andExpect(status().isOk());
+        mvc.perform(feed).andExpect(jsonPath("$.length()").value(1));
         read(get("/api/v1/management/channels"),"admin").andExpect(jsonPath("$[0].online").value(true));
         read(get("/api/v1/management/channels"),"operator").andExpect(status().isForbidden());
     }

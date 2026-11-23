@@ -14,7 +14,7 @@ openssl x509 -in agent.pem -outform DER | openssl dgst -sha256
 
 ## 目标主机
 
-主机使用 Linux、Python 3.11+ 和与目标 JVM 匹配的完整 JDK，以应用账户运行。一个代理身份和私有状态目录绑定一个明确登记的目标。先运行以下命令取得 PID 和进程指纹。管理员通过资产 API 登记 targetId、fingerprint、javaFeature，并将所属资产绑定到此代理身份。
+主机使用 Linux、Python 3.11+ 和与目标 JVM 匹配的完整 JDK，以应用账户运行。一个代理身份和私有状态目录绑定一个明确登记的目标。先运行以下命令取得 PID、进程指纹和 runtimeProfile。管理员通过资产 API 登记 targetId、fingerprint、javaFeature，并将所属资产绑定到此代理身份。
 
 ```sh
 python3 agent/host_agent.py --discover /opt/target-jdk
@@ -26,7 +26,8 @@ python3 agent/host_agent.py --discover /opt/target-jdk
 {
   "gateway": "https://gateway.example:8081",
   "ca": "/opt/diag/ca.pem", "cert": "/opt/diag/agent.pem", "key": "/opt/diag/agent.key",
-  "targetId": "sample-jvm", "pid": 12345, "fingerprint": "linux:<discovered-hash>",
+  "targetId": "sample-jvm", "pid": 12345, "fingerprint": "linux2:<discovered-hash>",
+  "runtimeProfile": {"os":"Linux","arch":"x86_64","javaVersion":"<from discovery>","vendor":"<from discovery>","vmName":"<from discovery>","javaFeature":17},
   "jdk": "/opt/target-jdk", "archive": "/opt/diag/arthas-4.3.5.zip",
   "sha256": "2f75ea954ead5d02c4a743ecd783fd92f546a44ef3aee437ea5066eb30ad07bf",
   "stateDir": "/var/tmp/sample-agent"
@@ -66,3 +67,14 @@ python3 agent/host_agent.py --discover /opt/target-jdk
 `tools/fixture-performance.py` 对同一合成 JVM 先运行空闲诊断基线，再开启周期快照。每阶段报告单核 CPU 使用率、业务批次 P95 中的最大值、交易次数和采样耗时。参数为 `--jdk --archive --classes --seconds`，默认动态附着，每阶段默认 20 秒。基线包含已加载的 Arthas。这个试验不能给出真实业务准入结论。
 
 `tools/fixture-experiments.py` 在脚本新建的合成 JVM 中执行两秒 wall 剖析、一次调用现场留存，校验生成物非空，并核对产物和留存条目已经删除。接口层没有暴露留存对象、产物文件和重放入口。使用与性能脚本相同的 JDK、介质及样例目录参数。
+
+
+## 运行档案与容器身份
+
+将发现输出中的 runtimeProfile 原样放入经主机管理员批准的配置。代理在启动时核对平台、架构、Java 更新版本和介质配置。linux2 指纹纳入 PID 命名空间。升级旧版 linux 指纹时先排空旧会话，重新发现并登记目标，在新私有目录启动代理。
+
+同容器部署可用 `--discover /opt/target-jdk --container`，通过部署平台传入 DIAGNOSTIC_CLUSTER、DIAGNOSTIC_NAMESPACE、DIAGNOSTIC_POD_UID 和 DIAGNOSTIC_CONTAINER_ID。将发现记录的 container 与 runtimeProfile 一同写入配置。代理校验目标的 PID、挂载命名空间及 cgroup 中的完整容器运行标识，并将集群、命名空间、Pod UID 和容器运行标识纳入指纹。目标 cgroup 不显示运行标识的环境会拒绝登记。实际集群的证书注入、卷路径、cgroup 可见性、Pod 删除与同名重建需在试点验证。
+
+## 按应用启用代码预览
+
+中心以逗号分隔的 `DIAGNOSTIC_CODE_VIEW_APPS` 配置允许查看代码的 appId，默认清单为空。主机配置 `allowedCodeClasses` 的完整类名白名单。操作员另行申请 CODE_VIEW，选择准确的类和加载器，可填写方法名。最长预览 960 字符，超过上限显示截断。文本只在代理和中心短暂缓存在内存，传输成功或过期后释放；数据库、回执日志和共享引用只保存任务元数据。中心最多缓存 128 条，最长 60 秒，每次用户读取均复核身份和授权并留痕。未提供源码下载接口。

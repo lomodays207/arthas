@@ -70,7 +70,7 @@ def server(java, jar, listen, env, *args):
 def host_agent_smoke(api, gateway_port, stalled_gateway, jdk, archive, classes):
     agent_script = Path(__file__).resolve().parents[1] / "agent" / "host_agent.py"
     sys.path.insert(0, str(agent_script.parent))
-    from host_agent import fingerprint
+    from identity import fingerprint, profile
     from native import await_condition, owned_listener
     import sqlite3
 
@@ -82,7 +82,8 @@ def host_agent_smoke(api, gateway_port, stalled_gateway, jdk, archive, classes):
             identity = fingerprint(fixture.pid,jdk)
             cfg = dict(pid=fixture.pid,jdk=str(jdk),gateway=f"https://127.0.0.1:{gateway_port}",
                        ca="ca.pem",cert="a.pem",key="a.key",targetId="real",fingerprint=identity,
-                       stateDir="agent-state",archive=str(archive),
+                       gateways=["https://127.0.0.1:"+str(port()),f"https://127.0.0.1:{gateway_port}"],
+                       stateDir="agent-state",archive=str(archive),runtimeProfile=profile(jdk),
                        sha256="2f75ea954ead5d02c4a743ecd783fd92f546a44ef3aee437ea5066eb30ad07bf")
             Path("agent.json").write_text(json.dumps(cfg))
             api.request("POST","/api/v1/assets/test/jvms",201,"admin",

@@ -18,11 +18,12 @@ import java.util.List;
 final class AccessFilter extends OncePerRequestFilter {
     static final String ACTOR = "io.diagnostic.platform.actor";
 
-    enum Role { ADMIN, APPROVER, OPERATOR, EXECUTOR }
+    enum Role { ADMIN, APPROVER, OPERATOR, EXECUTOR, INTEGRATION }
 
-    record Actor(String id, Role role) {
+    record Actor(String id, Role role, @com.fasterxml.jackson.annotation.JsonIgnore long expiresAt) {
+        Actor(String id, Role role) { this(id,role,Long.MAX_VALUE); }
         void require(Role expected) {
-            if (role != expected) {
+            if (role != expected || System.currentTimeMillis()>=expiresAt) {
                 throw ApiError.forbidden();
             }
         }
@@ -32,18 +33,23 @@ final class AccessFilter extends OncePerRequestFilter {
 
     private final List<Credential> credentials = new ArrayList<>();
 
-    AccessFilter(
+    private final FederatedIdentity identity;
+
+    AccessFilter(FederatedIdentity identity,
             @Value("${diagnostic.auth.admin-token}") String admin,
             @Value("${diagnostic.auth.approver-token}") String approver,
             @Value("${diagnostic.auth.operator-token}") String operator,
             @Value("${diagnostic.auth.operator2-token:}") String operator2,
             @Value("${diagnostic.auth.executor-token}") String executor,
             @Value("${diagnostic.auth.executor-id}") String executorId,
+            @Value("${DIAGNOSTIC_ITSM_TOKEN:}") String itsm,
             @Value("${DIAGNOSTIC_AGENT_TOKENS:}") String agentTokens) {
+        this.identity=identity;
         register(admin, new Actor("admin", Role.ADMIN));
         register(approver, new Actor("approver", Role.APPROVER));
         register(operator, new Actor("operator", Role.OPERATOR));
         register(operator2, new Actor("operator2", Role.OPERATOR));
+        register(itsm,new Actor("itsm",Role.INTEGRATION));
         register(executor, new Actor(executorId, Role.EXECUTOR));
         if (!agentTokens.isBlank()) {
             for (String entry : agentTokens.split(",", -1)) {
@@ -90,6 +96,14 @@ final class AccessFilter extends OncePerRequestFilter {
                     chain.doFilter(request, response);
                     return;
                 }
+            }
+        }
+        if (authorization!=null && authorization.startsWith("Bearer ") && authorization.length()<=8192) {
+            Actor actor=identity.resolve(authorization.substring(7));
+            if (actor!=null) {
+                request.setAttribute(ACTOR,actor);
+                chain.doFilter(request,response);
+                return;
             }
         }
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

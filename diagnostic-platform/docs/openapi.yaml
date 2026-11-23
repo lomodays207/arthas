@@ -204,6 +204,14 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Task'}
         '403': {description: Task or grant not available to this principal}
+  /api/v1/tasks/{id}/source:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: readEphemeralSource
+      responses:
+        '200': {description: Authorized memory-only source preview}
+        '404': {description: Preview expired or unavailable}
   /api/v1/tasks/{id}/events:
     parameters:
       - $ref: '#/components/parameters/Id'
@@ -246,6 +254,7 @@ paths:
                 completion: {enum: [ATTACHED, DONE, STOPPED, RELEASED, FAILED, UNKNOWN, TARGET_GONE]}
                 result: {$ref: '#/components/schemas/Snapshot'}
                 evidence: {$ref: '#/components/schemas/Evidence'}
+                preview: {type: string, maxLength: 960}
       responses:
         '204': {description: Completion recorded}
         '409': {description: Lease, generation, operation state or completion conflict}
@@ -330,6 +339,64 @@ paths:
       responses:
         '200': {description: Reference revoked}
 
+  /api/v1/inventory/assets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: readInventoryRevision
+      responses:
+        '200': {description: Inventory state and source revision}
+    put:
+      operationId: synchronizeAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceRevision, active, asset]
+              properties:
+                sourceRevision: {type: integer, minimum: 1}
+                active: {type: boolean}
+                asset: {$ref: '#/paths/~1api~1v1~1assets/post/requestBody/content/application~1json/schema'}
+      responses:
+        '200': {description: Revision applied or identical replay}
+        '409': {description: Stale revision, conflict or previous target still active}
+  /api/v1/integrations/tickets/events:
+    get:
+      operationId: pollTicketEvents
+      responses:
+        '200': {description: Ordered unacknowledged metadata events}
+  /api/v1/integrations/tickets/events/{id}/ack:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: acknowledgeTicketDelivery
+      responses:
+        '200': {description: Acknowledged}
+  /api/v1/management/zones:
+    get:
+      operationId: listZones
+      responses:
+        '200': {description: Zone policy revisions}
+  /api/v1/management/zones/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    put:
+      operationId: configureZone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paused,expectedRevision]
+              properties:
+                paused: {type: boolean}
+                expectedRevision: {type: integer, minimum: 1}
+      responses:
+        '200': {description: Updated zone policy}
+
 components:
   parameters:
     Id:
@@ -371,7 +438,7 @@ components:
             - $ref: '#/components/schemas/Evidence'
             - {type: 'null'}
     Capability:
-      enum: [JVM_OVERVIEW, THREAD_LIST, THREAD_DETAIL, CLASS_METHOD_LOOKUP, METHOD_WATCH, METHOD_TRACE, METHOD_STACK, METHOD_MONITOR]
+      enum: [JVM_OVERVIEW, THREAD_LIST, THREAD_DETAIL, CLASS_METHOD_LOOKUP, METHOD_WATCH, METHOD_TRACE, METHOD_STACK, METHOD_MONITOR, CODE_VIEW]
     Criteria:
       type: object
       additionalProperties: false

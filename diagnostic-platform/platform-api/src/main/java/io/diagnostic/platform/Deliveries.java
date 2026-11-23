@@ -22,7 +22,10 @@ class Deliveries {
 
     private record Receipt(String completion, String resultJson) {}
 
-    Deliveries(Store store, Dispatch dispatch, ObjectMapper json) {
+    private final SourcePreview sources;
+
+    Deliveries(Store store, Dispatch dispatch, ObjectMapper json, SourcePreview sources) {
+        this.sources = sources;
         this.store = store;
         this.dispatch = dispatch;
         this.json = json;
@@ -113,6 +116,8 @@ class Deliveries {
         if (overview && input.result().heapUsedBytes() > input.result().heapCommittedBytes()) {
             throw ApiError.invalid("INVALID_RESULT");
         }
+        if (input.preview()!=null && (!requiresSnapshot || dispatch.task(operation.taskId()).capability()!=io.diagnostic.protocol.Capability.CODE_VIEW))
+            throw ApiError.invalid("UNEXPECTED_PREVIEW");
         String result = input.evidence() == null ? serialize(input.result()) : dispatch.encode(input.evidence());
         if (result != null && result.length() > 5500) throw ApiError.invalid("RESULT_TOO_LARGE");
         var prior = store.find(Receipt.class, "SELECT * FROM edge_event_inbox WHERE operation_id = ?", id);
@@ -145,6 +150,8 @@ class Deliveries {
                 INSERT INTO edge_event_inbox (operation_id, completion, result_json, received_at)
                 VALUES (?, ?, ?, ?)
                 """, id, input.completion().name(), result, store.now());
+        if (input.preview()!=null && dispatch.task(operation.taskId()).state()==TaskState.SUCCEEDED)
+            sources.publish(operation.taskId(),input.preview());
         store.write("UPDATE operation_outbox SET state = 'ACKED' WHERE operation_id = ?", id);
         store.audit(actor.id(), "OPERATION_COMPLETED", control.targetId(), null, operation.taskId(),
                 input.completion().name());

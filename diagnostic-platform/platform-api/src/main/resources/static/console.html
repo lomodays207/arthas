@@ -10,6 +10,6 @@
 <section id="workspace" hidden><h2>诊断会话</h2><p id="sessionState"></p><button id="shared" hidden>刷新共享 JVM 面板</button><pre id="overview"></pre><label>诊断能力<select id="capability"></select></label>
 <label id="threadField" hidden>线程 ID<input id="threadId" type="number" min="1"></label>
 <span id="methodFields" hidden><label>类全名<input id="className"></label><label>方法名<input id="methodName"></label><label>加载器哈希<input id="loader"></label></span>
-<button id="sample">执行诊断</button><button id="cancel">取消任务</button><button id="close">关闭会话</button><dl id="metrics"></dl><div id="observations"></div></section>
+<button id="sample">执行诊断</button><button id="cancel">取消任务</button><button id="close">关闭会话</button><dl id="metrics"></dl><div id="observations"></div><button id="readSource" hidden>查看临时代码预览</button><pre id="source"></pre></section>
 <section id="sharing" hidden><h2>诊断证据</h2><label>接收人身份<input id="readerId"></label><button id="share">共享当前任务结果</button><label>引用编号<input id="refId"></label><button id="readRef">查看引用</button><button id="revokeRef">撤销共享</button><pre id="referenceData"></pre></section>
 <section id="history" hidden><h2>操作记录</h2><ol id="events"></ol></section></main></body></html>

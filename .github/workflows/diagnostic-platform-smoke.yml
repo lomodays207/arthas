@@ -65,6 +65,7 @@ jobs:
         if: matrix.java == '17'
         working-directory: diagnostic-platform
         run: |
+          python3 tools/sso-smoke.py --java "$PLATFORM_JAVA" --platform platform-api/target/platform-api-0.1.0-SNAPSHOT.jar
           python3 -m venv "$RUNNER_TEMP/console-test"
           "$RUNNER_TEMP/console-test/bin/pip" install playwright==1.55.0
           "$RUNNER_TEMP/console-test/bin/python" tools/console-smoke.py --java "$PLATFORM_JAVA" \

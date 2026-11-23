@@ -18,7 +18,10 @@ class Registry {
     private final Store store;
     private final Dispatch dispatch;
 
-    Registry(Store store, Dispatch dispatch) {
+    private final SourcePreview sources;
+
+    Registry(Store store, Dispatch dispatch, SourcePreview sources) {
+        this.sources = sources;
         this.store = store;
         this.dispatch = dispatch;
     }
@@ -26,6 +29,7 @@ class Registry {
     @Transactional
     public Asset registerAsset(AccessFilter.Actor actor, AssetInput input) {
         actor.require(ADMIN);
+        ensureZone(input.zoneId());
         store.write("""
                 INSERT INTO asset_instance (asset_id, app_id, environment_name, zone_id, agent_id, display_name)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -46,14 +50,15 @@ class Registry {
         return store.list(Asset.class, """
                 SELECT a.* FROM asset_instance a
                 JOIN asset_member m ON m.asset_id = a.asset_id
-                WHERE m.actor_id = ? ORDER BY a.asset_id LIMIT 200
+                WHERE m.actor_id = ? AND a.inventory_active=TRUE ORDER BY a.asset_id LIMIT 200
                 """, actor.id());
     }
 
     @Transactional
     public Candidate registerTarget(AccessFilter.Actor actor, String assetId, TargetInput input) {
         actor.require(ADMIN);
-        asset(assetId);
+        if (store.values(String.class,"SELECT asset_id FROM asset_instance WHERE asset_id=? AND inventory_active=TRUE FOR UPDATE",assetId).isEmpty())
+            throw ApiError.missing();
         store.write("INSERT INTO jvm_target (target_id, asset_id, fingerprint, java_feature) VALUES (?, ?, ?, ?)",
                 input.targetId(), assetId, input.fingerprint(), input.javaFeature());
         store.write("INSERT INTO target_control (target_id, generation, attach_state) VALUES (?, 0, 'RELEASED')",
@@ -70,15 +75,17 @@ class Registry {
         }
         return store.list(Candidate.class, """
                 SELECT target_id, java_feature FROM jvm_target
-                WHERE asset_id = ? ORDER BY target_id LIMIT 200
+                WHERE asset_id = ? AND retired=FALSE ORDER BY target_id LIMIT 200
                 """, assetId);
     }
 
     @Transactional
     public Grant requestGrant(AccessFilter.Actor actor, GrantInput input) {
         actor.require(OPERATOR);
-        Target target = store.get(Target.class, "SELECT * FROM jvm_target WHERE target_id = ?", input.targetId());
+        dispatch.lock(input.targetId());
+        Target target = store.get(Target.class, "SELECT * FROM jvm_target WHERE target_id = ? AND retired=FALSE", input.targetId());
         requireMember(target.assetId(), actor.id());
+        if (input.capabilities().contains(Capability.CODE_VIEW)) sources.requireEnabled(target.targetId());
         long now = store.now();
         if (input.requestedUntil() <= now || input.requestedUntil() > now + GRANT_LIMIT) {
             throw ApiError.invalid("INVALID_GRANT_DEADLINE");
@@ -166,6 +173,10 @@ class Registry {
                 SELECT * FROM audit_event WHERE target_id = ?
                 ORDER BY occurred_at DESC, event_id DESC LIMIT 200
                 """, targetId);
+    }
+
+    void ensureZone(String zone) {
+        store.write("INSERT INTO zone_policy(zone_id) VALUES (?) ON DUPLICATE KEY UPDATE zone_id=?",zone,zone);
     }
 
     private void requirePending(Grant grant) {

@@ -24,10 +24,13 @@ class Dispatch {
     private final ObjectMapper json;
     private final long idleTtl;
 
-    Dispatch(Store store, ObjectMapper json, @Value("${diagnostic.idle-release-ms:120000}") long idleTtl) {
+    private final SourcePreview sources;
+
+    Dispatch(Store store, ObjectMapper json, SourcePreview sources, @Value("${diagnostic.idle-release-ms:120000}") long idleTtl) {
         if (idleTtl < 100 || idleTtl > Duration.ofHours(1).toMillis()) {
             throw new IllegalArgumentException("Invalid idle release duration");
         }
+        this.sources = sources;
         this.store = store;
         this.json = json;
         this.idleTtl = idleTtl;
@@ -102,6 +105,7 @@ class Dispatch {
         Session current = ownedSession(actor, sessionId);
         Grant grant = requireGrant(actor.id(), current.targetId(), current.grantId());
         requireActiveOrOpening(current);
+        if (input.capability()==Capability.CODE_VIEW) sources.requireEnabled(current.targetId());
         if (!List.of(grant.capabilities().split(",")).contains(input.capability().name())) {
             throw ApiError.forbidden();
         }
@@ -170,7 +174,10 @@ class Dispatch {
 
     private Operations.Policy policy(String target) {
         var policy = store.get(Operations.Policy.class, """
-                SELECT p.* FROM asset_policy p JOIN jvm_target t ON p.asset_id=t.asset_id WHERE t.target_id=? FOR UPDATE
+                SELECT p.asset_id,(p.paused OR z.paused) paused,p.max_sessions,p.revision
+                FROM asset_policy p JOIN jvm_target t ON p.asset_id=t.asset_id
+                JOIN asset_instance a ON a.asset_id=p.asset_id JOIN zone_policy z ON z.zone_id=a.zone_id
+                WHERE t.target_id=? FOR UPDATE
                 """,target);
         if (policy.paused()) throw ApiError.conflict("ASSET_PAUSED");
         return policy;

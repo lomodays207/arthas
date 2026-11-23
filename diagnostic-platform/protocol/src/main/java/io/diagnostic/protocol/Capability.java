@@ -8,5 +8,6 @@ public enum Capability {
     METHOD_WATCH,
     METHOD_TRACE,
     METHOD_STACK,
+    CODE_VIEW,
     METHOD_MONITOR
 }
