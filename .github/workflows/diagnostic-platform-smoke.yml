@@ -52,6 +52,8 @@ jobs:
             --jdk "$JAVA_HOME" --java-feature "$TARGET_FEATURE" --arthas-zip "$archive" \
             --sha256 "$ARTHAS_ZIP_SHA256" --classes fixtures/target/classes
 
+          python3 tools/diagnostics-smoke.py --jdk "$JAVA_HOME" --archive "$archive" --classes fixtures/target/classes
+
           python3 tools/gateway-smoke.py --java "$PLATFORM_JAVA" \
             --platform platform-api/target/platform-api-0.1.0-SNAPSHOT.jar \
             --gateway gateway/target/gateway-0.1.0-SNAPSHOT.jar \
@@ -62,12 +64,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     services:
-              python3 tools/gateway-smoke.py --java "$PLATFORM_JAVA" \
-            --platform platform-api/target/platform-api-0.1.0-SNAPSHOT.jar \
-            --gateway gateway/target/gateway-0.1.0-SNAPSHOT.jar \
-            --jdk "$JAVA_HOME" --archive "$archive" --classes fixtures/target/classes
-
-  mysql:
+      mysql:
         image: mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: fixture-root

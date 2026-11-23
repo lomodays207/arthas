@@ -93,22 +93,21 @@ class Dispatch {
         if (key == null || !key.matches("[A-Za-z0-9._:-]{1,128}")) {
             throw ApiError.invalid("INVALID_IDEMPOTENCY_KEY");
         }
-        if (input.capability() != Capability.JVM_OVERVIEW) {
-            throw ApiError.invalid("CAPABILITY_UNAVAILABLE");
-        }
+        input.validate();
+        String parameters = input.criteria() == null ? "{}" : encode(input.criteria());
         Session initial = ownedSession(actor, sessionId);
         Control control = lock(initial.targetId());
         Session current = ownedSession(actor, sessionId);
         Grant grant = requireGrant(actor.id(), current.targetId(), current.grantId());
         requireActiveOrOpening(current);
-        if (!grant.capabilities().equals(input.capability().name())) {
+        if (!List.of(grant.capabilities().split(",")).contains(input.capability().name())) {
             throw ApiError.forbidden();
         }
         var existing = store.find(Task.class, """
                 SELECT * FROM diagnosis_task WHERE session_id = ? AND request_key = ?
                 """, sessionId, key);
         if (existing.isPresent()) {
-            if (existing.get().capability() != input.capability()) {
+            if (existing.get().capability() != input.capability() || !existing.get().parameters().equals(parameters)) {
                 throw ApiError.conflict("IDEMPOTENCY_KEY_REUSED");
             }
             return view(existing.get());
@@ -125,9 +124,9 @@ class Dispatch {
         store.write("""
                 INSERT INTO diagnosis_task (task_id, session_id, target_id, actor_id, generation, capability,
                                             parameters, request_key, state, deadline_at)
-                VALUES (?, ?, ?, ?, ?, ?, '{}', ?, 'QUEUED', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED', ?)
                 """, id, sessionId, current.targetId(), actor.id(), current.generation(), input.capability().name(),
-                key, deadline);
+                parameters, key, deadline);
         store.write("UPDATE target_control SET active_task_id = ? WHERE target_id = ?", id, current.targetId());
         enqueue(current.targetId(), current.generation(), OperationType.SNAPSHOT, id, store.now());
         store.audit(actor.id(), "TASK_QUEUED", current.targetId(), current.grantId(), id, null);
@@ -152,7 +151,7 @@ class Dispatch {
         Session session = session(current.sessionId());
         if (!canReadGrant(actor.id(), current.targetId(), session.grantId())) {
             return new TaskView(current.taskId(), current.targetId(), current.capability(), current.state(),
-                    current.generation(), current.deadlineAt(), null);
+                    current.generation(), current.deadlineAt(), null, null);
         }
         return view(current);
     }
@@ -378,11 +377,24 @@ class Dispatch {
         return Math.min(grant.expiresAt(), store.now() + SESSION_TTL);
     }
 
+    String encode(Object value) {
+        try { return json.writeValueAsString(value); }
+        catch (JsonProcessingException e) { throw new IllegalStateException(e); }
+    }
+
+    Criteria criteria(Task task) {
+        if (task.parameters().equals("{}")) return null;
+        try { return json.readValue(task.parameters(), Criteria.class); }
+        catch (JsonProcessingException e) { throw new IllegalStateException(e); }
+    }
+
     private TaskView view(Task task) {
         try {
-            Snapshot result = task.resultJson() == null ? null : json.readValue(task.resultJson(), Snapshot.class);
+            boolean overview = task.capability() == Capability.JVM_OVERVIEW;
+            Snapshot result = overview && task.resultJson() != null ? json.readValue(task.resultJson(), Snapshot.class) : null;
+            Evidence evidence = !overview && task.resultJson() != null ? json.readValue(task.resultJson(), Evidence.class) : null;
             return new TaskView(task.taskId(), task.targetId(), task.capability(), task.state(),
-                    task.generation(), task.deadlineAt(), result);
+                    task.generation(), task.deadlineAt(), result, evidence);
         } catch (JsonProcessingException error) {
             throw new IllegalStateException("Persisted snapshot cannot be read", error);
         }

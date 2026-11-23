@@ -52,14 +52,44 @@ final class Records {
     record Session(String sessionId, String targetId, String grantId, String actorId,
                    long generation, long expiresAt, String state) {}
 
-    record TaskInput(@NotNull Capability capability) {}
+    record Criteria(@Positive Long threadId,
+                    @Pattern(regexp="[a-zA-Z_$][a-zA-Z0-9_$.]{0,149}") String className,
+                    @Pattern(regexp="[a-zA-Z_$][a-zA-Z0-9_$]{0,79}") String methodName,
+                    @Pattern(regexp="[0-9a-f]{1,8}") String loader) {}
+
+    record TaskInput(@NotNull Capability capability, @Valid Criteria criteria) {
+        void validate() {
+            boolean valid = switch (capability) {
+                case JVM_OVERVIEW, THREAD_LIST -> criteria == null;
+                case THREAD_DETAIL -> criteria != null && criteria.threadId() != null && criteria.className() == null
+                        && criteria.methodName() == null && criteria.loader() == null;
+                default -> criteria != null && criteria.threadId() == null && criteria.className() != null
+                        && criteria.methodName() != null
+                        && (capability == Capability.CLASS_METHOD_LOOKUP || criteria.loader() != null);
+            };
+            if (!valid) throw ApiError.invalid("INVALID_DIAGNOSTIC_CRITERIA");
+        }
+    }
+
+    enum Coverage { COMPLETE, TRUNCATED, NO_HIT }
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    record Observation(@Size(max=160) @Pattern(regexp="[a-zA-Z0-9_$.<>/]+") String className,
+                       @Size(max=100) @Pattern(regexp="[a-zA-Z0-9_$<>]+") String methodName,
+                       @Pattern(regexp="[0-9a-f]{1,8}") String loader,
+                       @Size(max=160) @Pattern(regexp="[a-zA-Z0-9_$();/\\[.]+") String descriptor,
+                       @Positive Long threadId, @Pattern(regexp="NEW|RUNNABLE|BLOCKED|WAITING|TIMED_WAITING|TERMINATED|AtExit|AtExceptionExit|AtEnter") String state,
+                       @PositiveOrZero Double costMs, @PositiveOrZero Double cpuPercent,
+                       @PositiveOrZero Long success, @PositiveOrZero Long failed, Integer line,
+                       @PositiveOrZero Integer depth) {}
+    record Evidence(@NotNull Coverage coverage, @Positive long sampledAt,
+                    @NotNull @Size(max=12) List<@Valid @NotNull Observation> rows) {}
 
     record Task(String taskId, String sessionId, String targetId, String actorId, long generation,
                 Capability capability, TaskState state, long deadlineAt, String cancelReason,
-                String resultJson) {}
+                String resultJson, String parameters) {}
 
     record TaskView(String taskId, String targetId, Capability capability, TaskState state,
-                    long generation, long deadlineAt, Snapshot result) {}
+                    long generation, long deadlineAt, Snapshot result, Evidence evidence) {}
 
     record Control(String targetId, long generation, String attachState, String activeTaskId) {}
 
@@ -71,13 +101,13 @@ final class Records {
                      Long leaseUntil, String leaseToken, String state) {}
 
     record Delivery(String operationId, String leaseToken, String targetId, String fingerprint,
-                    long generation, OperationType type, String taskId, long leaseUntil, Long taskDeadline) {}
+                    long generation, OperationType type, String taskId, long leaseUntil, Long taskDeadline, Capability capability, Criteria criteria) {}
 
     record Snapshot(@NotNull @PositiveOrZero Long heapUsedBytes, @NotNull @PositiveOrZero Long heapCommittedBytes,
                     @NotNull @PositiveOrZero Long nonHeapUsedBytes, @NotNull @PositiveOrZero Long uptimeMillis,
                     @NotNull @PositiveOrZero Integer threadCount) {}
     record CompletionInput(@NotBlank String leaseToken, @NotNull Completion completion,
-                           @Valid Snapshot result) {}
+                           @Valid Snapshot result, @Valid Evidence evidence) {}
 
     record Audit(String eventId, String actorId, String action, String targetId, String grantId,
                  String taskId, String reasonCode, long occurredAt) {}

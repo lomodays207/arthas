@@ -40,8 +40,20 @@ async function targets() {
 }
 async function refresh() {
   grants = await api('/grants');
-  options('grant', grants, 'grantId', g => [g.targetId, g.ticketId, g.state].join(' · '));
+  options('grant', grants, 'grantId', g => [g.targetId, g.ticketId, g.capabilities, g.state].join(' · '));
 }
+const caps = {JVM_OVERVIEW:'JVM 快照',THREAD_LIST:'线程热点',THREAD_DETAIL:'线程堆栈',
+  CLASS_METHOD_LOOKUP:'类及方法定位',METHOD_WATCH:'方法观测',METHOD_TRACE:'调用树',
+  METHOD_STACK:'调用路径',METHOD_MONITOR:'调用统计'};
+const capOptions = values => values.map(k => ({key:k,label:caps[k]}));
+options('requested', capOptions(Object.keys(caps)), 'key', x => x.label);
+el('requested').options[0].selected = true;
+function fields() {
+  const cap = el('capability').value;
+  show('threadField',cap === 'THREAD_DETAIL');
+  show('methodFields',cap === 'CLASS_METHOD_LOOKUP' || cap.startsWith('METHOD_'));
+}
+action('capability',fields,'change');
 action('login', async () => {
   token = el('token').value;
   const me = await api('/me');
@@ -60,7 +72,7 @@ action('login', async () => {
 action('asset', targets, 'change');
 action('refresh', refresh);
 action('apply', async () => {
-  await api('/grants','POST',{targetId:el('target').value, capabilities:['JVM_OVERVIEW'],
+  await api('/grants','POST',{targetId:el('target').value, capabilities:Array.from(el('requested').selectedOptions,x=>x.value),
     ticketId:el('ticket').value.trim(), requestedUntil:Date.now()+3600000});
   await refresh(); record('已提交授权申请');
 });
@@ -81,6 +93,24 @@ const terminal = state => ['SUCCEEDED','FAILED','CANCELLED','TIMED_OUT'].include
 function renderTask(t) {
   if (!task || task.state !== t.state) record(t.taskId+' · '+t.state);
   task = t;
+  el('metrics').replaceChildren(); el('observations').replaceChildren();
+  if (t.evidence) {
+    const ev = t.evidence;
+    const caption = document.createElement('p');
+    caption.textContent = new Date(ev.sampledAt).toLocaleString()+' · '+
+      ({COMPLETE:'已返回',TRUNCATED:'已截断',NO_HIT:'未命中'}[ev.coverage]);
+    el('observations').append(caption);
+    const table = document.createElement('table');
+    const keys = [...new Set(ev.rows.flatMap(row => Object.keys(row)))];
+    const header = table.createTHead().insertRow();
+    const names = {threadId:'线程 ID',cpuPercent:'CPU %',state:'状态',className:'类',methodName:'方法',
+      loader:'加载器',descriptor:'方法描述符',costMs:'耗时 (ms)',success:'成功',failed:'失败',line:'源代码行',depth:'调用层级'};
+    for (const key of keys) header.appendChild(document.createElement('th')).textContent = names[key] || key;
+    for (const row of ev.rows) {
+      const tr = table.insertRow(); for (const key of keys) tr.insertCell().textContent = row[key] ?? '';
+    }
+    el('observations').append(table);
+  }
   if (!t.result) return;
   const labels = {heapUsedBytes:'已用堆（字节）',heapCommittedBytes:'已提交堆（字节）',
     nonHeapUsedBytes:'已用非堆（字节）',threadCount:'线程数',uptimeMillis:'运行时间（毫秒）'};
@@ -105,12 +135,20 @@ action('open', async () => {
   const g = grants.find(g => g.grantId === el('grant').value);
   if (!g || g.state !== 'GRANTED') throw Error('请选择已批准的授权');
   session = await api('/sessions','POST',{targetId:g.targetId,grantId:g.grantId});
+  options('capability',capOptions(g.capabilities.split(',')),'key',x=>x.label); fields();
   show('workspace',true); await monitor(session.sessionId);
 });
 action('sample', async () => {
   if (task && !terminal(task.state)) throw Error('当前任务仍在执行');
   pendingKey ||= crypto.randomUUID();
-  renderTask(await api(sessionUrl()+'/tasks','POST',{capability:'JVM_OVERVIEW'},pendingKey));
+  const capability = el('capability').value;
+  let criteria;
+  if (capability === 'THREAD_DETAIL') criteria = {threadId:Number(el('threadId').value)};
+  if (capability === 'CLASS_METHOD_LOOKUP' || capability.startsWith('METHOD_')) {
+    criteria = {className:el('className').value.trim(),methodName:el('methodName').value.trim(),
+      loader:el('loader').value.trim() || null};
+  }
+  renderTask(await api(sessionUrl()+'/tasks','POST',{capability,criteria},pendingKey));
   pendingKey = null;
 });
 action('cancel', async () => {
@@ -119,7 +157,7 @@ action('cancel', async () => {
 });
 action('close', async () => {
   await api(sessionUrl(),'DELETE'); clearTimeout(timer); session = task = pendingKey = null;
-  el('metrics').replaceChildren(); show('workspace',false); record('会话已关闭');
+  el('metrics').replaceChildren(); el('observations').replaceChildren(); show('workspace',false); record('会话已关闭');
 });
 action('logout', async () => {
   try { if (session) await api(sessionUrl(),'DELETE'); }

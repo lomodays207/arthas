@@ -82,9 +82,7 @@ class Registry {
         if (input.requestedUntil() <= now || input.requestedUntil() > now + GRANT_LIMIT) {
             throw ApiError.invalid("INVALID_GRANT_DEADLINE");
         }
-        if (!input.capabilities().equals(java.util.Set.of(Capability.JVM_OVERVIEW))) {
-            throw ApiError.invalid("CAPABILITY_UNAVAILABLE");
-        }
+        
         String id = Store.id();
         String capabilities = input.capabilities().stream().map(Enum::name).sorted().collect(Collectors.joining(","));
         store.write("""

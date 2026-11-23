@@ -19,6 +19,7 @@ import time
 from urllib.parse import urlsplit
 
 import native
+from diagnostics import diagnostic
 
 
 def fingerprint(pid, jdk):
@@ -153,7 +154,12 @@ class Agent:
             return ("STOPPED" if row["state"] == "CLOSED" else "UNKNOWN"), None
         if (op["type"] == "SNAPSHOT" and row["state"] == "READY" and
                 time.time()*1000 < min(op["taskDeadline"],op["leaseUntil"])):
-            return "DONE", native.snapshot(lambda action,**args:self.call(row,action,**args))
+            def call(action, **args):
+                return self.call(row,action,**args)
+            if op.get("capability") in (None,"JVM_OVERVIEW"):
+                return "DONE", native.snapshot(call)
+            return "DONE", diagnostic(call,op["capability"],op["criteria"],self.cfg.get("allowedMethods",[]),
+                                      min(op["leaseUntil"],op["taskDeadline"]))
         return "UNKNOWN", None
 
     def tick(self):
@@ -183,7 +189,7 @@ class Agent:
             status, result = "UNKNOWN", None
         body = dict(leaseToken=op["leaseToken"],completion=status)
         if result is not None:
-            body["result"] = result
+            body["evidence" if "rows" in result else "result"] = result
         self.db.execute("UPDATE receipt SET body=? WHERE id=?",(json.dumps(body),op["operationId"]))
         self.db.commit()
 

@@ -72,8 +72,8 @@ class Deliveries {
             }
             Target target = store.get(Target.class, "SELECT * FROM jvm_target WHERE target_id = ?", operation.targetId());
             String token = Store.id();
-            Long deadline = operation.operationType() == OperationType.SNAPSHOT
-                    ? dispatch.task(operation.taskId()).deadlineAt() : null;
+            Task task = operation.operationType() == OperationType.SNAPSHOT ? dispatch.task(operation.taskId()) : null;
+            Long deadline = task == null ? null : task.deadlineAt();
             long until = store.now() + LEASE_TTL;
             store.write("""
                     UPDATE operation_outbox SET state = 'CLAIMED', lease_token = ?, lease_until = ?
@@ -82,7 +82,7 @@ class Deliveries {
             store.audit(actor.id(), "OPERATION_CLAIMED", control.targetId(), null, operation.taskId(),
                     operation.operationType().name());
             return new Delivery(operation.operationId(), token, operation.targetId(), target.fingerprint(),
-                    operation.generation(), operation.operationType(), operation.taskId(), until, deadline);
+                    operation.generation(), operation.operationType(), operation.taskId(), until, deadline, task == null ? null : task.capability(), task == null ? null : dispatch.criteria(task));
         }
         return null;
     }
@@ -101,13 +101,15 @@ class Deliveries {
         }
         boolean requiresSnapshot = operation.operationType() == OperationType.SNAPSHOT
                 && input.completion() == Completion.DONE;
-        if (requiresSnapshot != (input.result() != null)) {
+        boolean overview = requiresSnapshot && dispatch.task(operation.taskId()).capability() == io.diagnostic.protocol.Capability.JVM_OVERVIEW;
+        if (overview != (input.result() != null) || (requiresSnapshot && !overview) != (input.evidence() != null)) {
             throw ApiError.invalid("INVALID_RESULT");
         }
-        if (requiresSnapshot && input.result().heapUsedBytes() > input.result().heapCommittedBytes()) {
+        if (overview && input.result().heapUsedBytes() > input.result().heapCommittedBytes()) {
             throw ApiError.invalid("INVALID_RESULT");
         }
-        String result = serialize(input.result());
+        String result = input.evidence() == null ? serialize(input.result()) : dispatch.encode(input.evidence());
+        if (result != null && result.length() > 5500) throw ApiError.invalid("RESULT_TOO_LARGE");
         var prior = store.find(Receipt.class, "SELECT * FROM edge_event_inbox WHERE operation_id = ?", id);
         if (prior.isPresent()) {
             if (!prior.get().completion().equals(input.completion().name())

@@ -4,7 +4,10 @@
 <form id="login"><label>访问令牌<input id="token" type="password" required autocomplete="off"></label><button>登录</button></form>
 <div id="message" role="status" aria-live="polite"></div>
 <section id="assets" hidden><h2>目标实例</h2><label>应用实例<select id="asset"></select></label><label>目标 JVM<select id="target"></select></label><button id="audit" hidden>查询目标审计</button></section>
-<section id="operator" hidden><h2>诊断授权</h2><label>工单号<input id="ticket" maxlength="100"></label><button id="apply">申请一小时 JVM 快照权限</button></section>
+<section id="operator" hidden><h2>诊断授权</h2><label>工单号<input id="ticket" maxlength="100"></label><label>申请能力<select id="requested" multiple size="4"></select></label><button id="apply">申请一小时诊断权限</button></section>
 <section id="approvals" hidden><h2>授权记录</h2><button id="refresh">刷新记录</button><label>选择授权<select id="grant"></select></label><span id="decisions" hidden><label>原因代码<input id="reason" value="ticket-reviewed" maxlength="100"></label><button id="approve">批准</button><button id="deny">驳回</button><button id="revoke">撤销</button></span><button id="open" hidden>打开工作区</button></section>
-<section id="workspace" hidden><h2>诊断会话</h2><p id="sessionState"></p><button id="sample">采集 JVM 快照</button><button id="cancel">取消任务</button><button id="close">关闭会话</button><dl id="metrics"></dl></section>
+<section id="workspace" hidden><h2>诊断会话</h2><p id="sessionState"></p><label>诊断能力<select id="capability"></select></label>
+<label id="threadField" hidden>线程 ID<input id="threadId" type="number" min="1"></label>
+<span id="methodFields" hidden><label>类全名<input id="className"></label><label>方法名<input id="methodName"></label><label>加载器哈希<input id="loader"></label></span>
+<button id="sample">执行诊断</button><button id="cancel">取消任务</button><button id="close">关闭会话</button><dl id="metrics"></dl><div id="observations"></div></section>
 <section id="history" hidden><h2>操作记录</h2><ol id="events"></ol></section></main></body></html>
